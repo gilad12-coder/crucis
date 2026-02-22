@@ -74,12 +74,14 @@ Each profile defines `primary` and `secondary` gates plus optional guidance that
 crucis init [OPTIONS]
 ```
 
-Scaffold a new Crucis workspace with starter files.
+Scaffold a new Crucis workspace. By default, an AI agent conducts an interactive interview about your project and generates tailored files. Use `--no-agent` to skip the interview and use static templates.
 
 | Option | Default | Description |
 |---|---|---|
 | `--name` | `my_project` | Project name; built-in templates exist for `factorial` |
 | `--workspace` | `.` | Directory to scaffold |
+| `--agent` | config default | Which agent conducts the onboarding (`claude` or `codex`) |
+| `--no-agent` | off | Skip AI interview; use static templates (for CI/automation) |
 
 Creates: `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, `src/solution.py`.
 

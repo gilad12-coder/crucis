@@ -8,7 +8,7 @@ Every command, concept, model, and configuration option in Crucis.
 
 ### `crucis init`
 
-Scaffold a new Crucis workspace.
+Scaffold a new Crucis workspace. By default, an AI agent interviews you about your project and generates tailored files.
 
 ```bash
 crucis init [options]
@@ -18,6 +18,8 @@ crucis init [options]
 |------|---------|-------------|
 | `--name` | `my_project` | Project name; built-in templates exist for `factorial` |
 | `--workspace` | `.` | Directory to scaffold |
+| `--agent` | config default | Which agent conducts the onboarding (`claude` or `codex`) |
+| `--no-agent` | off | Skip AI interview; use static templates (for CI/automation) |
 
 ### `crucis plan`
 
@@ -153,7 +155,7 @@ crucis optimizer-worker [options]
 
 ### Scaffold
 
-The workspace initialization created by `crucis init`. Generates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Built-in templates (e.g., `factorial`) produce complete objectives with real train evals.
+The workspace initialization created by `crucis init`. By default, an AI agent conducts an interactive interview to generate tailored files based on your project type and requirements. With `--no-agent`, static templates are used instead. Either way, generates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Built-in templates (e.g., `factorial`) produce complete objectives with real train evals.
 
 ### Plan
 

@@ -161,8 +161,11 @@ All long-running phases emit structured JSONL telemetry under `.crucis/logs/`.
 ## Commands
 
 ```bash
-# Initialize a new workspace
+# Initialize a new workspace (interactive agent interview)
 crucis init --name my_function
+
+# Initialize without agent (static templates)
+crucis init --name my_function --no-agent
 
 # Generate a structured plan
 crucis plan objective.yaml

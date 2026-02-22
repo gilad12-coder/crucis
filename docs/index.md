@@ -40,7 +40,7 @@ mkdir my-project && cd my-project
 crucis init --name add
 ```
 
-This creates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit the generated `objective.yaml` to describe your function:
+An AI agent interviews you about your project, then generates tailored workspace files. Use `--no-agent` for static templates (CI/automation). Either way, you get `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit the generated `objective.yaml` to describe your function:
 
 ```yaml title="objective.yaml"
 name: add

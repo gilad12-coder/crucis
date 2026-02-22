@@ -5,6 +5,7 @@ site/
 *.egg-info/
 dist/
 .idea/
+.cache/
 
 # Crucis run artifacts
 .session.json

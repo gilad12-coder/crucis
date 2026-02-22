@@ -14,7 +14,7 @@ If you're starting fresh, initialize a workspace first:
 crucis init --name my_function
 ```
 
-This creates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit `objective.yaml` to describe your function, then run `crucis fit objective.yaml`.
+By default, an AI agent interviews you about your project. Use `--no-agent` for static templates. Either way, this creates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit `objective.yaml` to describe your function, then run `crucis fit objective.yaml`.
 
 ### API key not set
 

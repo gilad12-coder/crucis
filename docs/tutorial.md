@@ -11,7 +11,13 @@ mkdir my-project && cd my-project
 crucis init --name add
 ```
 
-This scaffolds starter files:
+By default, an AI agent interviews you about your project — asking about project type, constraints, and tasks — then generates tailored workspace files. To skip the interview and use static templates (useful for CI or scripting), add `--no-agent`:
+
+```bash
+crucis init --name add --no-agent
+```
+
+Either way, you get these starter files:
 
 - `objective.yaml` — objective template with your function name
 - `constraints/profiles.yaml` — default constraint profiles

@@ -106,6 +106,8 @@ project/
   curriculum.md            # Generated evaluation guide
   constraints/
     profiles.yaml          # Constraint profile definitions
+  crucis/prompts/
+    templates/             # Jinja2 templates for all prompt rendering
   tests/
     test_<task>.py         # Generated train suites
   src/
@@ -136,12 +138,15 @@ project/
 | `cli/runner.py` | Subprocess wrapper for Claude/Codex agents |
 | `core/loop.py` | Fit and evaluation orchestration, test verification |
 | `core/planner.py` | Structured plan generation (`crucis plan`) |
-| `core/prompts.py` | Prompt builders for generation, adversary, probe, evaluation |
+| `prompts/__init__.py` | Jinja2 template engine for all prompt rendering |
+| `prompts/_filters.py` | Custom Jinja2 filters (path_to_module, bool_label, readable_name) |
+| `prompts/templates/` | Jinja2 templates for generation, adversary, probe, evaluation, plan, curriculum, onboarding |
+| `core/prompts.py` | Thin prompt builder wrappers delegating to Jinja2 templates |
 | `core/adversary.py` | Adversarial review, probe generation and execution |
 | `core/curriculum.py` | Markdown curriculum from checkpoint + objective |
 | `core/test_generator.py` | Python extraction from LLM responses |
 | `intake/objective.py` | YAML objective parsing and validation |
-| `intake/scaffold.py` | Workspace scaffolding (`crucis init`) |
+| `intake/scaffold.py` | Workspace scaffolding and agent-driven onboarding (`crucis init`) |
 | `intake/migration.py` | Legacy schema migration (spec.yaml, .session.json) |
 | `constraints/loader.py` | Profile loading and constraint resolution |
 | `constraints/checker.py` | AST-based static analysis (1700+ lines, 34 checks) |
