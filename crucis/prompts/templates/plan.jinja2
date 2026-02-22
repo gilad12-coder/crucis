@@ -1,0 +1,42 @@
+{#- Plan generation prompt for structured test-suite guidance. -#}
+{% from "_macros.jinja2" import constraints_dump %}
+You are a test-generation architect. Write a detailed generation plan that a coding agent will follow to produce pytest test suites.
+
+The plan must be a Markdown document with one section per task. For each task, specify:
+1. **File structure** — module docstring, imports, named constants
+2. **Test function template** — exact docstring format, decorator patterns, return annotations
+3. **Required test categories** — numbered list of behavior groups to cover (spec examples, edge cases, error cases, round-trip properties)
+4. **Constraint compliance** — specific instructions for satisfying each constraint (how to write docstrings, how to avoid magic numbers, etc.)
+
+## Objective: {{ objective.name }}
+
+Description: {{ objective.description }}
+
+{% if objective.target_files %}
+Target files: {{ objective.target_files | map("tojson") | join(", ") }}
+
+{% endif %}
+{% for task in effective_tasks %}
+### Task: {{ task.name }}
+{% if task.description %}
+Description: {{ task.description }}
+{% endif %}
+{% if task.signature %}
+Signature: `{{ task.signature }}`
+{% endif %}
+{% if task.train_evals %}
+Train evals:
+{% for ev in task.train_evals %}
+  - {{ task.name }}({{ ev.input }}) -> {{ ev.output }}
+{% endfor %}
+{% endif %}
+{% if constraints_data.get(task.name) %}
+{% set cd = constraints_data[task.name] %}
+Constraints:
+{{ constraints_dump(cd.primary_dump, cd.secondary_dump, cd.guidance) }}
+{% endif %}
+
+{% endfor %}
+IMPORTANT: The plan must be detailed enough that a coding agent can produce a constraint-compliant test file on the FIRST attempt. Be explicit about docstring format (Google-style with Args section), magic number avoidance (named constants), and function length limits.
+
+Output ONLY the Markdown plan. No code blocks, no preamble.

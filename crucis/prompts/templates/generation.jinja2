@@ -1,0 +1,43 @@
+{#- Test generation prompt for creating pytest train suites. -#}
+{% from "_macros.jinja2" import train_evals, primary_constraints, secondary_constraints, guidance, target_files, policy_context %}
+Write pytest tests for the callable `{{ objective.name }}`.
+
+{{ policy_context(policy, "generation") -}}
+Objective description: {{ objective.description }}
+
+Signature: {{ objective.signature or NOT_SPECIFIED }}
+
+Target files:
+{{ target_files(objective) }}
+
+Import the callable from the target module shown above. Do NOT guess module names.
+
+Train evals:
+{{ train_evals(objective) }}
+Primary constraints:
+{{ primary_constraints(constraints) }}
+
+Secondary constraints:
+{{ secondary_constraints(constraints) }}
+
+Guidance:
+{{ guidance(constraints) }}
+
+{% if plan_content %}
+GENERATION PLAN (follow this structure closely):
+{{ plan_content }}
+
+{% endif %}
+Generate comprehensive pytest test functions that cover edge cases.
+
+IMPORTANT: Output ONLY the complete Python test file content in a single ```python``` block. Do NOT write files to disk.
+{% if constraint_feedback %}
+
+WARNING: A previous generation was rejected for constraint violations. Fix ALL of them:
+{{ constraint_feedback }}
+{% endif %}
+{% if adversarial_feedback %}
+
+ADVERSARY FEEDBACK: A previous train suite was exploited. Address these findings in your next train suite:
+{{ adversarial_feedback }}
+{% endif %}

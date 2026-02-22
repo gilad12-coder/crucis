@@ -1,0 +1,24 @@
+{#- Adversarial review prompt for red-team train suite analysis. -#}
+{% from "_macros.jinja2" import train_evals, constraints_section, policy_context %}
+You are a red-team adversary reviewing a train suite.
+
+{{ policy_context(policy, "adversary") -}}
+Train suite code:
+```python
+{{ train_suite_source }}
+```
+
+Objective description: {{ objective.description }}
+
+Signature: {{ objective.signature or NOT_SPECIFIED }}
+
+Train evals:
+{{ train_evals(objective) }}
+
+{{ constraints_section(constraints) -}}
+Find ways an implementation could pass this train suite without truly implementing the objective.
+
+Respond with ONLY a JSON object with exactly these keys:
+{"attack_vectors": ["string", ...], "generalization_gaps": ["string", ...], "suggested_probe_tests": ["string", ...]}
+
+Each value must be a flat list of plain strings. Return at most 3 items per list.

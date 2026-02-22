@@ -1,0 +1,86 @@
+{#- Evaluation curriculum markdown artifact. -#}
+{% from "_macros.jinja2" import constraints_dump %}
+# Evaluation Curriculum
+
+## Objective: {{ objective.name }}
+
+**Description:** {{ objective.description }}
+
+{% if objective.target_files %}
+## Target Files
+
+{% for path in objective.target_files %}
+- `{{ path }}`
+{% endfor %}
+
+{% endif %}
+## Train Suite Files
+
+{% for progress in completed_tasks %}
+{% if progress.train_suite_source %}
+- `tests/test_{{ progress.name }}.py`
+{% endif %}
+{% endfor %}
+
+## Tasks
+
+{% for progress in completed_tasks %}
+{% set task_obj = task_lookup.get(progress.name) %}
+### {{ progress.name }}
+
+{% if task_obj and task_obj.signature %}
+**Signature:** `{{ task_obj.signature }}`
+
+{% elif objective.signature %}
+**Signature:** `{{ objective.signature }}`
+
+{% endif %}
+{% set desc = (task_obj.description if task_obj else "") or objective.description %}
+**Description:** {{ desc }}
+
+{% set evals = (task_obj.train_evals if task_obj else []) or objective.train_evals %}
+{% if evals %}
+**Train evals:**
+{% for eval_case in evals %}
+- `{{ progress.name }}({{ eval_case.input }})` -> `{{ eval_case.output }}`
+{% endfor %}
+
+{% endif %}
+{% if test_constraints.get(progress.name) %}
+{% set tc = test_constraints[progress.name] %}
+**Test constraints:**
+{{ constraints_dump(tc.primary_dump, tc.secondary_dump, tc.guidance) }}
+
+{% endif %}
+{% if impl_constraints and impl_constraints.get(progress.name) %}
+{% set ic = impl_constraints[progress.name] %}
+**Implementation constraints:**
+{{ constraints_dump(ic.primary_dump, ic.secondary_dump, ic.guidance) }}
+
+{% endif %}
+{% if progress.adversarial_report %}
+**Adversarial findings:**
+{% set report = progress.adversarial_report %}
+{% if report.attack_vectors %}
+- attack vectors:
+{% for item in report.attack_vectors %}
+  - {{ item }}
+{% endfor %}
+{% endif %}
+{% if report.generalization_gaps %}
+- generalization gaps:
+{% for item in report.generalization_gaps %}
+  - {{ item }}
+{% endfor %}
+{% endif %}
+{% if report.suggested_probe_tests %}
+- suggested probe tests:
+{% for item in report.suggested_probe_tests %}
+  - {{ item }}
+{% endfor %}
+{% endif %}
+
+{% endif %}
+---
+
+{% endfor %}

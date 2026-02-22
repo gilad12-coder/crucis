@@ -1,0 +1,143 @@
+{#- Shared formatting macros for Crucis prompt templates. -#}
+
+{#- Format train evaluation examples as a bullet list. -#}
+{% macro train_evals(objective) %}
+{% if objective.train_evals %}
+{% for ex in objective.train_evals %}
+  - {{ objective.name }}({{ ex.input }}) -> {{ ex.output }}
+{% endfor %}
+{% else %}
+{{ NONE_PLACEHOLDER }}
+{% endif %}
+{% endmacro %}
+
+{#- Format primary constraints for the generation prompt. -#}
+{% macro primary_constraints(constraints) %}
+{% set parts = [] %}
+{% if constraints.primary.max_cyclomatic_complexity is not none %}
+{% set _ = parts.append("max cyclomatic complexity: " ~ constraints.primary.max_cyclomatic_complexity) %}
+{% endif %}
+{% if constraints.primary.max_lines_per_function is not none %}
+{% set _ = parts.append("max lines per function: " ~ constraints.primary.max_lines_per_function) %}
+{% endif %}
+{% if constraints.primary.max_time_complexity is not none %}
+{% set _ = parts.append("max time complexity: " ~ constraints.primary.max_time_complexity) %}
+{% endif %}
+{% if constraints.primary.no_magic_numbers %}
+{% set _ = parts.append("no magic numbers in function bodies (use named constants or @pytest.mark.parametrize)") %}
+{% endif %}
+{% if constraints.primary.require_docstrings %}
+{% set _ = parts.append("every function/class must include a docstring") %}
+{% endif %}
+{% if parts %}
+{% for item in parts %}
+  - {{ item }}
+{% endfor %}
+{% else %}
+{{ NONE_PLACEHOLDER }}
+{% endif %}
+{% endmacro %}
+
+{#- Format secondary constraints. -#}
+{% macro secondary_constraints(constraints) %}
+{% set parts = [] %}
+{% if constraints.secondary.require_docstrings %}
+{% set _ = parts.append("every function/class must include a docstring") %}
+{% endif %}
+{% if constraints.secondary.require_type_annotations %}
+{% set _ = parts.append("all function parameters and returns must be type-annotated") %}
+{% endif %}
+{% if constraints.secondary.no_print_statements %}
+{% set _ = parts.append("no print() calls; use logging") %}
+{% endif %}
+{% if parts %}
+{% for item in parts %}
+  - {{ item }}
+{% endfor %}
+{% else %}
+{{ NONE_PLACEHOLDER }}
+{% endif %}
+{% endmacro %}
+
+{#- Format guidance list. -#}
+{% macro guidance(constraints) %}
+{% if constraints.guidance %}
+{% for item in constraints.guidance %}
+  - {{ item }}
+{% endfor %}
+{% else %}
+{{ NONE_PLACEHOLDER }}
+{% endif %}
+{% endmacro %}
+
+{#- Format target files with import hints. -#}
+{% macro target_files(objective) %}
+{% if objective.target_files %}
+{% for tf in objective.target_files %}
+  - File: {{ tf }} -> import as: `from {{ tf | path_to_module }} import {{ objective.name }}`
+{% endfor %}
+{% else %}
+  (not specified)
+{% endif %}
+{% endmacro %}
+
+{#- Format optimizer policy context for a specific stage. -#}
+{% macro policy_context(policy, stage) %}
+{% if policy %}
+{% set stage_map = {
+    "generation": policy.generation_directives,
+    "adversary": policy.adversary_directives,
+    "evaluation": policy.evaluation_directives,
+} %}
+{% set directives = stage_map.get(stage, "") %}
+{% if policy.repository_skill.strip() %}
+Repository skill guidance:
+{{ policy.repository_skill.strip() }}
+
+{% endif %}
+{% if directives.strip() %}
+Stage directives ({{ stage }}):
+{{ directives.strip() }}
+
+{% endif %}
+{% endif %}
+{% endmacro %}
+
+{#- Format full constraints section (primary + secondary + guidance). -#}
+{% macro constraints_section(constraints) %}
+{% if constraints is not none %}
+Primary constraints:
+{{ primary_constraints(constraints) }}
+
+Secondary constraints:
+{{ secondary_constraints(constraints) }}
+
+Guidance to enforce:
+{{ guidance(constraints) }}
+
+{% endif %}
+{% endmacro %}
+
+{#- Format dynamic constraint dump from model_dump dicts (plan/curriculum). -#}
+{% macro constraints_dump(primary_fields, secondary_fields, guidance_list) %}
+{% for label, fields in [("primary", primary_fields), ("secondary", secondary_fields)] %}
+{% if fields %}
+- {{ label }} constraints:
+{% for name, value in fields.items() %}
+{% if value is sameas true or value is sameas false %}
+  - {{ name | readable_name }}: {{ value | bool_label }}
+{% elif value is iterable and value is not string %}
+  - {{ name | readable_name }}: {{ value | join(", ") }}
+{% else %}
+  - {{ name | readable_name }}: {{ value }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% if guidance_list %}
+- guidance:
+{% for item in guidance_list %}
+  - {{ item }}
+{% endfor %}
+{% endif %}
+{% endmacro %}

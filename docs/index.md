@@ -1,112 +1,82 @@
-# agentic-tdd
+# Crucis Documentation
 
-**Agentic test-driven development. Write a spec, get tested code.**
+Objective-driven coding with adversarial verification and background policy optimization.
 
-You describe what a function should do. LLM agents generate tests, try to break them, and then write the implementation — all under mechanical quality constraints you control.
+## Why Crucis?
 
----
+Code generation agents can write code, but how do you know the code is correct? Running a few examples isn't enough -- generated implementations often hardcode known inputs, miss edge cases, or satisfy tests without implementing real logic.
 
-## Why?
+Crucis solves this by treating code generation as a **verification-first training loop**: tests are generated and adversarially attacked before any implementation is written. A cheating probe actively tries to pass the tests by faking results. Only when tests survive adversarial probing does the implementation agent get to work -- and even then, hidden holdout evals provide a final safety net.
 
-LLMs are good at writing code. They're bad at writing *correct* code. Tests help, but LLM-generated tests are often shallow — a cheating implementation can pass them with hardcoded returns.
+## Key Features
 
-agentic-tdd fixes this with a **2.5-loop system**:
+- **Adversarial test hardening** -- a critic agent attacks generated tests, finding gaps and cheating strategies. Tests improve through an arms race. [Learn more](workflow.md)
+- **Hidden holdout verification** -- holdout evals are never shown to any agent. They verify that implementations actually work, not just pass known tests. [Learn more](spec-format.md)
+- **Background policy optimization** -- a GEPA optimizer learns better prompt strategies over time, improving generation quality across runs. [Learn more](optimizer.md)
+- **34 static constraint checks** -- AST-based analysis enforces complexity limits, security rules, and code quality standards. [Learn more](constraints.md)
 
-- **Loop 1** — An LLM generates pytest tests from your spec.
-- **You review** — Approve, edit, or regenerate the tests.
-- **Loop 1.5** — A red-team critic actively tries to *cheat* the tests. If it succeeds, you know your tests are weak.
-- **Plan** — A structured implementation plan is auto-generated from the spec, constraints, and critique findings.
-- **Loop 2** — A separate LLM writes production code that passes the hardened tests inside a Docker container, retrying with error feedback until all tests pass.
+## Quick Start
 
-The result: code that is tested, critiqued, and constrained — not just "it compiles."
-
----
-
-## How it works
-
-```
-Spec ──> Generate Tests ──> You Review ──> Critic Attacks ──> Plan ──> Implement (Docker)
-```
-
-You write a YAML spec describing the function. The system does the rest.
-
-```yaml
-name: add
-description: |
-  Adds two integers and returns their sum.
-signature: "add(a: int, b: int) -> int"
-examples:
-  - input: "(1, 2)"
-    output: "3"
-```
+### Install
 
 ```bash
-# Interactive
-atdd run spec.yaml
-
-# Full auto with Docker implementation
-atdd run spec.yaml -y --implement
-```
-
-That's it. See the [Tutorial](tutorial.md) to walk through a complete example.
-
----
-
-## Features
-
-**Test generation from specs** — Describe what you want in YAML. Get a full pytest suite.
-
-**Red-team critique** — A critic agent finds exploit vectors in your tests, then *proves* they're weak by writing a cheating implementation that passes them.
-
-**Docker sandbox** — Implementation tests run in an isolated Docker container. Untrusted generated code never touches your host. Falls back to host pytest if Docker is unavailable.
-
-**Auto-generated implementation plan** — A structured `plan.md` is built from the spec, constraints, and critique findings, giving the implementation agent full context.
-
-**34 static analysis constraints** — Complexity limits, correctness checks, security rules, style enforcement. All checked via AST — no runtime needed. [See the full list](constraints.md).
-
-**Two-gate constraint system** — Primary constraints are hard blockers. Secondary constraints are advisory. Guidance strings are passed to the LLM but not mechanically checked.
-
-**Auto-accept mode** — Use `-y` to auto-accept tests and critique, or fine-tune with `--auto-tests` and `--auto-critique`. Add `--implement` to trigger implementation automatically.
-
-**Session persistence** — Progress saves after each step. Interrupted? Just re-run.
-
-**Pluggable agents** — Use Claude for test generation, Codex for implementation, or swap them. [Configure via environment variables](configuration.md).
-
----
-
-## Install
-
-```bash
+pip install crucis
+# or
 uv sync
 ```
 
-You'll also need the CLI agents installed separately:
+Requires Python 3.12+ and at least one agent CLI (`claude` or `codex`) on your PATH.
+
+Check your version:
 
 ```bash
-# Claude Code (test generation + critique)
-npm install -g @anthropic-ai/claude-code
-claude /login
-
-# OpenAI Codex (implementation)
-npm install -g @openai/codex
-codex auth login
-
-# Docker (optional — sandbox isolation for implementation tests)
-# https://docs.docker.com/get-docker/
+crucis --version
 ```
 
-!!! tip
-    See [Configuration](configuration.md) for all environment variables and CLI options.
+### Initialize a Workspace
 
----
+```bash
+mkdir my-project && cd my-project
+crucis init --name add
+```
 
-## Next steps
+This creates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit the generated `objective.yaml` to describe your function:
 
-<div class="grid cards" markdown>
+```yaml title="objective.yaml"
+name: add
+description: Add two integers and return the sum.
+signature: "add(a: int, b: int) -> int"
+train_evals:
+  - input: "(1, 2)"
+    output: "3"
+holdout_evals:
+  - input: "(100, 23)"
+    output: "123"
+tests_constraint_profile: default
+implementation_constraint_profile: default
+target_files:
+  - "src/add.py"
+```
 
-- **[Tutorial](tutorial.md)** — Walk through a complete spec-to-implementation example.
-- **[Spec Format](spec-format.md)** — YAML spec file reference.
-- **[Constraints](constraints.md)** — All 34 constraints with examples and quick-copy profiles.
-- **[Configuration](configuration.md)** — Environment variables, constraint profiles, CLI options.
+### Run
 
-</div>
+```bash
+# Interactive fit + evaluate
+crucis fit objective.yaml -y --evaluate
+
+# Or step by step
+crucis plan objective.yaml       # generate a structured plan
+crucis fit objective.yaml        # generate and harden tests
+crucis evaluate objective.yaml   # implement and verify
+crucis checkpoint                # check progress
+```
+
+### Verify Environment
+
+```bash
+crucis doctor
+```
+
+Checks Python version, agent binaries, API keys, Docker availability, and runtime settings.
+
+See the [Tutorial](tutorial.md) for a full walkthrough including multi-task objectives.

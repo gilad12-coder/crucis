@@ -1,0 +1,42 @@
+primary:
+  max_cyclomatic_complexity: 15
+  max_lines_per_function: 80
+  count_docstrings_in_function_lines: false
+  no_magic_numbers: true
+  max_string_literal_repeats: 3
+
+secondary:
+  require_docstrings: true
+
+target_files:
+  - "crucis/models.py"
+  - "crucis/config.py"
+  - "crucis/intake/objective.py"
+  - "crucis/cli/runner.py"
+  - "crucis/core/test_generator.py"
+  - "crucis/core/adversary.py"
+  - "crucis/constraints/checker.py"
+  - "crucis/constraints/loader.py"
+  - "crucis/persistence/checkpoint.py"
+  - "crucis/core/loop.py"
+  - "crucis/__main__.py"
+  - "crucis/display.py"
+  - "crucis/core/prompts.py"
+  - "crucis/intake/migration.py"
+  - "crucis/persistence/policy.py"
+  - "crucis/persistence/settings.py"
+  - "crucis/execution/sandbox.py"
+  - "crucis/execution/optimizer.py"
+  - "crucis/core/curriculum.py"
+  - "crucis/core/planner.py"
+  - "crucis/persistence/events.py"
+  - "crucis/defaults.py"
+  - "crucis/cli/constants.py"
+  - "crucis/core/constants.py"
+  - "crucis/execution/constants.py"
+  - "crucis/intake/constants.py"
+  - "crucis/persistence/constants.py"
+  - "crucis/intake/scaffold.py"
+  - "crucis/prompts/__init__.py"
+  - "crucis/prompts/_filters.py"
+  - "conftest.py"

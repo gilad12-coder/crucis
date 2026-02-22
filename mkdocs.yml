@@ -1,46 +1,72 @@
-site_name: agentic-tdd
-site_description: A 2.5-loop system for agentic test-driven development
-repo_url: https://github.com/gilad12-coder/agentic-tdd
-repo_name: gilad12-coder/agentic-tdd
+site_name: Crucis
+site_description: Objective-driven coding with adversarial verification
+repo_url: https://github.com/gilad12-coder/crucis
+repo_name: gilad12-coder/crucis
 
 theme:
   name: material
+  language: en
+  font:
+    text: Inter
+    code: JetBrains Mono
+  logo: assets/images/crucis-logo.svg
+  favicon: assets/images/crucis-logo.svg
   palette:
     - scheme: default
-      primary: black
-      accent: grey
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-7
+        icon: material/weather-night
         name: Switch to dark mode
     - scheme: slate
-      primary: black
-      accent: grey
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-4
+        icon: material/weather-sunny
         name: Switch to light mode
   features:
     - navigation.instant
-    - navigation.sections
-    - navigation.expand
-    - navigation.footer
+    - navigation.path
+    - navigation.top
     - search.highlight
+    - search.suggest
     - content.code.copy
+    - content.tabs.link
+    - navigation.footer
+    - toc.follow
+
+plugins:
+  - search
+
+extra_css:
+  - assets/stylesheets/stripe.css
 
 nav:
-  - Home: index.md
+  - Overview: index.md
   - Tutorial: tutorial.md
-  - Workflow: workflow.md
-  - Spec Format: spec-format.md
-  - Configuration: configuration.md
+  - Objective Format: spec-format.md
+  - How It Works: workflow.md
   - Constraints: constraints.md
+  - Architecture: architecture.md
+  - Configuration: configuration.md
+  - Background Optimizer: optimizer.md
+  - Troubleshooting: troubleshooting.md
+  - Glossary: glossary.md
 
 markdown_extensions:
   - tables
   - attr_list
   - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences
   - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
   - admonition
   - pymdownx.details

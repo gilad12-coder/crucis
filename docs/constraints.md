@@ -103,6 +103,8 @@ Prevent common vulnerability patterns.
 | `no_global_state` | Disallow module-level mutable variable assignments (excludes `UPPER_CASE` constants). |
 | `no_debugger_statements` | Disallow `import pdb`, `import ipdb`, `import pudb`, `breakpoint()`, and `from pdb import ...`. |
 | `no_nested_imports` | Disallow import statements inside functions. Usually a workaround for circular imports, indicating a design issue. |
+| `no_magic_numbers` | Disallow numeric literals other than -1, 0, 1, 2 inside function bodies. Exempt: `UPPER_CASE` module-level assignments, `Field()` kwargs, subscripts, power exponents. |
+| `max_string_literal_repeats` | Max number of times the same string literal can appear in the file. Exempt: docstrings, `UPPER_CASE` assignments, type annotations, decorator args, dict keys. |
 | `allowed_imports` | Whitelist of allowed import module names. Any import not in this list is flagged. |
 
 ??? example "Example profile"
@@ -150,6 +152,7 @@ profiles:
       no_mutable_defaults: true
       no_eval: true
       no_exec: true
+      no_magic_numbers: true
     secondary:
       require_docstrings: true
       no_print_statements: true

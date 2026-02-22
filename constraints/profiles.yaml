@@ -24,9 +24,18 @@ profiles:
       no_mutable_defaults: true
       no_eval: true
       no_exec: true
+      no_magic_numbers: true
     secondary:
       require_docstrings: true
       no_print_statements: true
       no_debugger_statements: true
+
+  config_hygiene:
+    primary:
+      no_magic_numbers: true
+      no_hardcoded_secrets: true
+      max_string_literal_repeats: 3
+    secondary:
+      no_global_state: true
 
 functions: {}

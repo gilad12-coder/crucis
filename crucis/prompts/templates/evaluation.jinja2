@@ -1,0 +1,21 @@
+{#- Evaluation/implementation agent prompt. -#}
+{% from "_macros.jinja2" import policy_context %}
+{% set policy_text = policy_context(policy, "evaluation") %}
+{% if policy_text.strip() %}
+{{ policy_text.strip() }}
+
+{% endif %}
+{% if curriculum_path %}
+Read the curriculum at {{ curriculum_path }} for objective signatures, constraints, and adversarial findings.
+
+{% endif %}
+Implement production code so all train-suite tests pass: {{ files }}.
+
+Write implementation code to the target files in the curriculum. Run pytest before finishing.
+
+Additional holdout evaluations may run after train-suite tests pass. Implement true behavior, not case matching.
+{% if error_feedback %}
+
+PREVIOUS ATTEMPT FAILED. Fix the errors below:
+{{ error_feedback }}
+{% endif %}

@@ -4,10 +4,11 @@ description: |
   interval lists. Each interval is a tuple of (start, end) where start < end.
   All functions must handle empty inputs and preserve the sorted,
   non-overlapping invariant in their output.
-constraint_profile: recommended
+tests_constraint_profile: recommended
+implementation_constraint_profile: recommended
 target_files:
   - "src/intervals.py"
-functions:
+tasks:
   - name: merge_intervals
     description: |
       Merge a list of possibly overlapping intervals into a sorted list of
@@ -19,14 +20,14 @@ functions:
       - Single interval returns a list with that interval.
       - Adjacent intervals (end of one == start of next) are merged.
     signature: "merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]"
-    examples:
+    train_evals:
       - input: "([(1, 3), (2, 5), (8, 10)])"
         output: "[(1, 5), (8, 10)]"
       - input: "([(1, 3), (3, 5)])"
         output: "[(1, 5)]"
       - input: "([])"
         output: "[]"
-    hidden_evals:
+    holdout_evals:
       - input: "([(10, 20), (15, 25), (30, 40)])"
         output: "[(10, 25), (30, 40)]"
       - input: "([(1, 2), (2, 3), (3, 4), (4, 5)])"
@@ -46,14 +47,14 @@ functions:
         intervals are merged into one.
       - Adjacent intervals (touching at endpoints) count as overlapping.
     signature: "insert_interval(intervals: list[tuple[int, int]], new: tuple[int, int]) -> list[tuple[int, int]]"
-    examples:
+    train_evals:
       - input: "([(1, 3), (6, 9)], (2, 5))"
         output: "[(1, 5), (6, 9)]"
       - input: "([(1, 2), (3, 5), (6, 7), (8, 10), (12, 16)], (4, 8))"
         output: "[(1, 2), (3, 10), (12, 16)]"
       - input: "([], (5, 7))"
         output: "[(5, 7)]"
-    hidden_evals:
+    holdout_evals:
       - input: "([(1, 5), (10, 15)], (5, 10))"
         output: "[(1, 15)]"
       - input: "([(1, 3)], (5, 7))"
@@ -72,14 +73,14 @@ functions:
       - Returns a sorted list of non-overlapping free intervals.
       - If range_start >= range_end, returns an empty list.
     signature: "find_free_slots(busy: list[tuple[int, int]], range_start: int, range_end: int) -> list[tuple[int, int]]"
-    examples:
+    train_evals:
       - input: "([(1, 3), (5, 8), (12, 15)], 0, 20)"
         output: "[(0, 1), (3, 5), (8, 12), (15, 20)]"
       - input: "([(0, 20)], 0, 20)"
         output: "[]"
       - input: "([], 0, 10)"
         output: "[(0, 10)]"
-    hidden_evals:
+    holdout_evals:
       - input: "([(2, 4), (6, 8)], 3, 7)"
         output: "[(4, 6)]"
       - input: "([(0, 5)], 0, 5)"
@@ -95,12 +96,12 @@ functions:
       - If either input is empty, returns an empty list.
       - Does not mutate either input list.
     signature: "interval_intersection(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> list[tuple[int, int]]"
-    examples:
+    train_evals:
       - input: "([(0, 2), (5, 10), (13, 23), (24, 25)], [(1, 5), (8, 12), (15, 24)])"
         output: "[(1, 2), (5, 5), (8, 10), (15, 23), (24, 24)]"
       - input: "([(1, 3), (5, 9)], [])"
         output: "[]"
-    hidden_evals:
+    holdout_evals:
       - input: "([(0, 10)], [(5, 15)])"
         output: "[(5, 10)]"
       - input: "([(0, 3), (5, 8)], [(2, 6)])"
