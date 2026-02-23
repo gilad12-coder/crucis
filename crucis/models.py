@@ -107,6 +107,8 @@ class TaskObjective(BaseModel):
     tests_constraint_profile: str | None = None
     implementation_constraint_profile: str | None = None
     target_files: list[str] = Field(default_factory=list)
+    context_files: list[str] = Field(default_factory=list)
+    existing_tests: list[str] = Field(default_factory=list)
 
 
 class ParsedObjective(BaseModel):
@@ -120,6 +122,8 @@ class ParsedObjective(BaseModel):
     tests_constraint_profile: str = "default"
     implementation_constraint_profile: str = "default"
     target_files: list[str] = Field(default_factory=list)
+    context_files: list[str] = Field(default_factory=list)
+    existing_tests: list[str] = Field(default_factory=list)
     tasks: list[TaskObjective] = Field(default_factory=list)
     verification_granularity: VerificationGranularity = VerificationGranularity.task
 

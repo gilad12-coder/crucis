@@ -14,6 +14,7 @@ def build_generation_prompt(
     adversarial_feedback: str = "",
     policy: OptimizerPolicy | None = None,
     plan_content: str = "",
+    context_files_content: dict[str, str] | None = None,
 ) -> str:
     """Build a prompt for generating pytest train-suite tests from an objective.
 
@@ -24,6 +25,7 @@ def build_generation_prompt(
         adversarial_feedback: Value for `adversarial_feedback` used by `build_generation_prompt`.
         policy: Active optimizer policy used for prompt steering.
         plan_content: Optional structured plan from plan.md to guide generation.
+        context_files_content: Existing file contents keyed by relative path.
 
     Returns:
         Computed text result for this operation.
@@ -36,6 +38,7 @@ def build_generation_prompt(
         adversarial_feedback=adversarial_feedback,
         policy=policy,
         plan_content=plan_content,
+        context_files_content=context_files_content or {},
     )
 
 

@@ -20,7 +20,14 @@ def load_profiles(profiles_path: Path) -> dict:
     Returns:
         Dictionary containing structured result data.
     """
-    data = yaml.safe_load(profiles_path.read_text(encoding=TEXT_ENCODING))
+    try:
+        raw = profiles_path.read_text(encoding=TEXT_ENCODING)
+    except FileNotFoundError:
+        raise ValueError(f"Profiles file not found: {profiles_path}") from None
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Could not parse YAML in {profiles_path}: {exc}") from None
     if not data:
         raise ValueError("Profiles file is empty")
 
@@ -49,7 +56,11 @@ def resolve_constraints(
     profile_name = _select_profile_name(objective, task_name, scope)
     profile_data = profiles.get(profile_name)
     if profile_data is None:
-        raise ValueError(f"Unknown constraint profile: {profile_name}")
+        available = sorted(k for k in profiles if k != _TASKS_KEY)
+        raise ValueError(
+            f"Unknown constraint profile: '{profile_name}'. "
+            f"Available: {', '.join(available) or '(none)'}"
+        )
 
     base_constraints = TaskConstraints(
         primary=ConstraintSet(**profile_data.get("primary", {})),

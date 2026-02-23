@@ -328,3 +328,192 @@ def test_parse_objective_accepts_new_constraint_profile_fields(tmp_path):
     assert result.implementation_constraint_profile == "recommended"
     assert result.tasks[0].tests_constraint_profile == "default"
     assert result.tasks[0].implementation_constraint_profile == "strict"
+
+
+def test_parse_objective_accepts_context_files(tmp_path):
+    """Parser should accept context_files at top-level and task-level.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "context_files": ["src/helpers.py", "README.md"],
+            "tasks": [
+                {
+                    "name": "add",
+                    "context_files": ["src/utils.py"],
+                }
+            ],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert result.context_files == ["src/helpers.py", "README.md"]
+    assert result.tasks[0].context_files == ["src/utils.py"]
+
+
+def test_parse_objective_accepts_existing_tests(tmp_path):
+    """Parser should accept existing_tests at top-level and task-level.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "existing_tests": ["tests/test_utils.py"],
+            "tasks": [
+                {
+                    "name": "add",
+                    "existing_tests": ["tests/test_helpers.py"],
+                }
+            ],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert result.existing_tests == ["tests/test_utils.py"]
+    assert result.tasks[0].existing_tests == ["tests/test_helpers.py"]
+
+
+def test_parse_objective_rejects_absolute_context_file(tmp_path):
+    """Context files must be workspace-relative paths.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "context_files": ["/etc/passwd"],
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert "workspace-relative" in str(exc.value)
+
+
+def test_parse_objective_rejects_context_file_with_traversal(tmp_path):
+    """Context files must not contain parent directory traversal.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "context_files": ["src/../secret.py"],
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert "must not contain '.' or '..'" in str(exc.value)
+
+
+def test_parse_objective_rejects_non_python_existing_test(tmp_path):
+    """Existing tests must point to .py files.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "existing_tests": ["tests/test_add.txt"],
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert ".py" in str(exc.value)
+
+
+def test_parse_objective_context_files_allow_non_python(tmp_path):
+    """Context files should accept any file extension.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "context_files": ["docs/design.md", "config.json", "src/lib.py"],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.context_files) == 3
+
+
+def test_parse_objective_malformed_yaml_raises_valueerror(tmp_path):
+    """Malformed YAML should raise ValueError, not yaml.YAMLError.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = tmp_path / "bad.yaml"
+    objective_file.write_text("name: [invalid: yaml: {{", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert "Could not parse YAML" in str(exc.value)
+
+
+def test_parse_objective_missing_file_raises_valueerror(tmp_path):
+    """Missing objective file should raise ValueError with clear message.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    with pytest.raises(ValueError) as exc:
+        parse_objective(tmp_path / "nonexistent.yaml")
+    assert "not found" in str(exc.value)
+
+
+def test_parse_objective_rejects_duplicate_task_names(tmp_path):
+    """Duplicate task names should be rejected.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": "Add",
+            "tasks": [
+                {"name": "foo"},
+                {"name": "foo"},
+            ],
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert "Duplicate task name" in str(exc.value)
+
+
+def test_parse_objective_pydantic_error_is_human_readable(tmp_path):
+    """Pydantic validation errors should be wrapped as readable ValueError.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "add",
+            "description": 12345,
+        },
+    )
+    with pytest.raises(ValueError) as exc:
+        parse_objective(objective_file)
+    assert "Invalid objective" in str(exc.value)

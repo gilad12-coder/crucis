@@ -14,6 +14,8 @@ Crucis reads YAML objective files with strict keys.
 | `tests_constraint_profile` | no | Constraint profile for generated tests (default: `default`) |
 | `implementation_constraint_profile` | no | Constraint profile for implementation code (default: `default`) |
 | `target_files` | no | Files the evaluator should write |
+| `context_files` | no | Existing files injected into generation and evaluation prompts |
+| `existing_tests` | no | Test files run as a regression gate during evaluation |
 | `tasks` | no | Multi-task objective entries |
 | `verification_granularity` | no | `task` (default) or `objective` |
 
@@ -29,6 +31,8 @@ Crucis reads YAML objective files with strict keys.
 | `tests_constraint_profile` | no | Task-specific test constraint profile override |
 | `implementation_constraint_profile` | no | Task-specific implementation constraint profile override |
 | `target_files` | no | Task-specific target files (fallback to top-level `target_files`) |
+| `context_files` | no | Task-specific context files (merged with top-level) |
+| `existing_tests` | no | Task-specific regression test files (merged with top-level) |
 
 ## Eval Schema
 

@@ -6,7 +6,14 @@ from pathlib import Path
 import yaml
 
 from crucis.defaults import TEXT_ENCODING
-from crucis.intake.constants import HOLDOUT_EVALS_KEY, NAME_KEY, TRAIN_EVALS_KEY
+from crucis.intake.constants import (
+    DESCRIPTION_KEY,
+    HOLDOUT_EVALS_KEY,
+    NAME_KEY,
+    SIGNATURE_KEY,
+    TASKS_KEY,
+    TRAIN_EVALS_KEY,
+)
 
 _OLD_TO_NEW_STATUS = {
     "pending": "pending",
@@ -19,6 +26,13 @@ _OLD_TO_NEW_STATUS = {
     "adversarially_reviewed": "adversarially_reviewed",
     "complete": "complete",
 }
+
+
+class _NoAliasSafeDumper(yaml.SafeDumper):
+    """Safe dumper variant that disables YAML anchors and aliases."""
+
+    def ignore_aliases(self, data: object) -> bool:
+        return True
 
 
 def migrate_objective_data(data: dict) -> dict:
@@ -36,9 +50,9 @@ def migrate_objective_data(data: dict) -> dict:
     tests_cp = data.get("tests_constraint_profile", data.get("constraint_profile", "default"))
     impl_cp = data.get("implementation_constraint_profile", "default")
     output = {
-        "name": data.get(NAME_KEY),
-        "description": data.get("description"),
-        "signature": data.get("signature"),
+        NAME_KEY: data.get(NAME_KEY),
+        DESCRIPTION_KEY: data.get(DESCRIPTION_KEY),
+        SIGNATURE_KEY: data.get(SIGNATURE_KEY),
         "tests_constraint_profile": tests_cp,
         "implementation_constraint_profile": impl_cp,
         "target_files": list(data.get("target_files") or []),
@@ -47,7 +61,14 @@ def migrate_objective_data(data: dict) -> dict:
 
     output[TRAIN_EVALS_KEY] = _resolve_train_evals(data)
     output[HOLDOUT_EVALS_KEY] = _resolve_holdout_evals(data)
-    output["tasks"] = [_migrate_task_data(task) for task in _resolve_tasks(data)]
+    output[TASKS_KEY] = [_migrate_task_data(task) for task in _resolve_tasks(data)]
+
+    if not output[TASKS_KEY] and output.get(NAME_KEY):
+        default_task: dict = {NAME_KEY: output[NAME_KEY]}
+        for key in (DESCRIPTION_KEY, SIGNATURE_KEY, TRAIN_EVALS_KEY, HOLDOUT_EVALS_KEY):
+            if output.get(key):
+                default_task[key] = output[key]
+        output[TASKS_KEY] = [default_task]
 
     return {k: v for k, v in output.items() if v is not None}
 
@@ -93,7 +114,7 @@ def _resolve_tasks(data: dict) -> list[dict]:
     """
     if "functions" in data:
         return list(data.get("functions") or [])
-    return list(data.get("tasks") or [])
+    return list(data.get(TASKS_KEY) or [])
 
 
 def _migrate_task_data(task: dict) -> dict:
@@ -111,9 +132,9 @@ def _migrate_task_data(task: dict) -> dict:
     tests_cp = task.get("tests_constraint_profile", task.get("constraint_profile"))
     impl_cp = task.get("implementation_constraint_profile")
     output = {
-        "name": task.get(NAME_KEY),
-        "description": task.get("description", ""),
-        "signature": task.get("signature"),
+        NAME_KEY: task.get(NAME_KEY),
+        DESCRIPTION_KEY: task.get(DESCRIPTION_KEY, ""),
+        SIGNATURE_KEY: task.get(SIGNATURE_KEY),
         "tests_constraint_profile": tests_cp,
         "implementation_constraint_profile": impl_cp,
         "target_files": list(task.get("target_files") or []),
@@ -132,15 +153,30 @@ def migrate_objective_file(objective_in: Path, objective_out: Path) -> None:
         objective_in: Input objective path to migrate.
         objective_out: Output path for migrated objective YAML.
     """
-    data = yaml.safe_load(objective_in.read_text(encoding=TEXT_ENCODING))
-    if not data:
+    try:
+        raw = objective_in.read_text(encoding=TEXT_ENCODING)
+    except FileNotFoundError:
+        raise ValueError(f"Objective file not found: {objective_in}") from None
+    except OSError as exc:
+        raise ValueError(f"Could not read objective file {objective_in}: {exc}") from None
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Could not parse YAML in {objective_in}: {exc}") from None
+    if data is None:
         raise ValueError("Objective file is empty")
+    if not isinstance(data, dict):
+        raise ValueError("Objective file must contain a top-level mapping")
 
     migrated = migrate_objective_data(data)
-    objective_out.write_text(
-        yaml.safe_dump(migrated, sort_keys=False),
-        encoding=TEXT_ENCODING,
-    )
+    try:
+        objective_out.write_text(
+            yaml.dump(migrated, sort_keys=False, Dumper=_NoAliasSafeDumper),
+            encoding=TEXT_ENCODING,
+        )
+    except OSError as exc:
+        raise ValueError(f"Could not write migrated objective file {objective_out}: {exc}") from None
 
 
 def migrate_checkpoint_data(data: dict) -> dict:
@@ -232,6 +268,20 @@ def migrate_checkpoint_file(checkpoint_in: Path, checkpoint_out: Path) -> None:
         checkpoint_in: Input checkpoint path to migrate.
         checkpoint_out: Output path for migrated checkpoint JSON.
     """
-    data = json.loads(checkpoint_in.read_text(encoding=TEXT_ENCODING))
+    try:
+        raw = checkpoint_in.read_text(encoding=TEXT_ENCODING)
+    except FileNotFoundError:
+        raise ValueError(f"Checkpoint file not found: {checkpoint_in}") from None
+    except OSError as exc:
+        raise ValueError(f"Could not read checkpoint file {checkpoint_in}: {exc}") from None
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse JSON in {checkpoint_in}: {exc}") from None
+
     migrated = migrate_checkpoint_data(data)
-    checkpoint_out.write_text(json.dumps(migrated, indent=2), encoding=TEXT_ENCODING)
+    try:
+        checkpoint_out.write_text(json.dumps(migrated, indent=2), encoding=TEXT_ENCODING)
+    except OSError as exc:
+        raise ValueError(f"Could not write migrated checkpoint file {checkpoint_out}: {exc}") from None

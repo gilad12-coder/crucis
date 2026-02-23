@@ -1,5 +1,7 @@
 """Tests for checkpoint state helpers."""
 
+import pytest
+
 from crucis.models import (
     AdversarialReport,
     CheckpointState,
@@ -80,3 +82,16 @@ def test_load_checkpoint_missing_returns_none(tmp_path):
         tmp_path: Temporary directory provided by pytest.
     """
     assert load_checkpoint(tmp_path / "missing.json") is None
+
+
+def test_load_checkpoint_corrupted_raises_valueerror(tmp_path):
+    """Corrupted checkpoint JSON should raise ValueError, not ValidationError.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"invalid": "data"}', encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_checkpoint(bad)
+    assert "Invalid checkpoint file" in str(exc.value)

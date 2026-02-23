@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from crucis.constraints.loader import load_profiles, resolve_constraints
@@ -204,3 +205,48 @@ def test_resolve_constraints_task_override_per_scope(tmp_path):
 
     assert test_resolved.primary.max_cyclomatic_complexity == 5
     assert impl_resolved.primary.max_cyclomatic_complexity == 10
+
+
+def test_load_profiles_missing_file_raises_valueerror(tmp_path):
+    """Missing profiles file should raise ValueError with clear message.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    with pytest.raises(ValueError) as exc:
+        load_profiles(tmp_path / "nonexistent.yaml")
+    assert "not found" in str(exc.value)
+
+
+def test_load_profiles_malformed_yaml_raises_valueerror(tmp_path):
+    """Malformed YAML in profiles should raise ValueError.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    bad = tmp_path / "profiles.yaml"
+    bad.write_text("profiles: [invalid: yaml: {{", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_profiles(bad)
+    assert "Could not parse YAML" in str(exc.value)
+
+
+def test_resolve_constraints_unknown_profile_lists_available(tmp_path):
+    """Unknown profile error should list available profile names.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    profiles = load_profiles(_write_profiles(tmp_path))
+    objective = ParsedObjective(
+        name="auth",
+        description="Auth task",
+        tests_constraint_profile="nonexistent",
+        target_files=["src/auth.py"],
+    )
+    with pytest.raises(ValueError) as exc:
+        resolve_constraints(objective, profiles, scope="tests")
+    msg = str(exc.value)
+    assert "nonexistent" in msg
+    assert "default" in msg
+    assert "strict" in msg

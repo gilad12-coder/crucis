@@ -13,6 +13,7 @@ from crucis.persistence.policy import OptimizerStatus
 
 _YES = "yes"
 _NO = "no"
+_MAX_NAMES_SHOWN = 3
 
 _console = Console()
 
@@ -88,13 +89,7 @@ def display_checkpoint_table(
         adversarial_value = _YES if progress.adversarial_report else _NO
         table.add_row(progress.name, progress.status.value, suite_value, adversarial_value)
     c.print(table)
-
-    complete = sum(1 for p in state.task_progress if p.status == TrainingStatus.complete)
-    total = len(state.task_progress)
-    if complete == total:
-        c.print(f"[dim]{complete}/{total} tasks complete. Ready for evaluation.[/dim]")
-    else:
-        c.print(f"[dim]{complete}/{total} tasks complete. Run `crucis fit` to continue.[/dim]")
+    _print_checkpoint_next_steps(c, state)
 
     if optimizer_status is not None:
         _print_optimizer_status(c, optimizer_status)
@@ -122,6 +117,29 @@ def _print_optimizer_status(c: Console, status: OptimizerStatus) -> None:
         c.print(f"- promote hint: crucis promote --run-id {status.candidate_run_id}")
     if str(status.state) == "failed":
         c.print("[dim](optimizer is optional and does not affect fit/evaluate)[/dim]")
+
+
+def _print_checkpoint_next_steps(c: Console, state: CheckpointState) -> None:
+    """Print contextual next-step hints based on checkpoint state.
+
+    Args:
+        c: Rich console instance.
+        state: Checkpoint state being processed.
+    """
+    complete = sum(1 for p in state.task_progress if p.status == TrainingStatus.complete)
+    total = len(state.task_progress)
+    pending = sum(1 for p in state.task_progress if p.status == TrainingStatus.pending)
+    c.print(f"[dim]{complete}/{total} tasks complete.[/dim]")
+    if complete == total and total > 0:
+        c.print("[dim]Next: crucis evaluate <objective.yaml>[/dim]")
+    elif pending == total:
+        c.print("[dim]Next: crucis fit <objective.yaml> -y[/dim]")
+    else:
+        incomplete = [p.name for p in state.task_progress if p.status != TrainingStatus.complete]
+        names = ", ".join(incomplete[:_MAX_NAMES_SHOWN])
+        if len(incomplete) > _MAX_NAMES_SHOWN:
+            names += f" (+{len(incomplete) - _MAX_NAMES_SHOWN} more)"
+        c.print(f"[dim]Remaining: {names}. Run `crucis fit` to continue.[/dim]")
 
 
 def display_task_header(
@@ -164,7 +182,10 @@ def display_fit_complete(
     c.print(f"[bold green]Fit complete: {complete}/{total} tasks complete[/bold green]")
     c.print(f"[bold green]{'─' * SEPARATOR_WIDTH}[/bold green]")
     obj_hint = f" --objective {objective_path}" if objective_path else ""
-    c.print(f"[dim]Next: run `crucis evaluate{obj_hint}` to implement[/dim]\n")
+    c.print(f"[dim]Next: run `crucis evaluate{obj_hint}` to implement[/dim]")
+    if total > 1 and complete < total:
+        c.print("[dim]Tip: use --task <name> to re-run specific tasks[/dim]")
+    c.print()
 
 
 def display_dry_run_prompt(
@@ -257,6 +278,32 @@ def display_evaluation_result(
     else:
         c.print("\n[bold red]Evaluation failed: tests did not pass.[/bold red]")
         c.print("[dim]Check errors above and re-run evaluation.[/dim]")
+
+
+_MAX_FAILURE_OUTPUT_LINES = 30
+
+
+def display_test_failure_output(
+    output: str,
+    console: Console | None = None,
+) -> None:
+    """Print bounded pytest failure output for user debugging.
+
+    Args:
+        output: Raw pytest output text.
+        console: Rich console instance used for output rendering.
+    """
+    c = console or _console
+    if not output.strip():
+        return
+    lines = output.strip().splitlines()
+    if len(lines) > _MAX_FAILURE_OUTPUT_LINES:
+        shown = lines[-_MAX_FAILURE_OUTPUT_LINES:]
+        header = f"Test output (last {_MAX_FAILURE_OUTPUT_LINES} of {len(lines)} lines)"
+    else:
+        shown = lines
+        header = "Test output"
+    c.print(Panel("\n".join(shown), title=header, border_style="red"))
 
 
 def display_workspace(workspace: Path, console: Console | None = None) -> None:

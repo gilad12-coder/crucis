@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from crucis.execution.optimizer import (
     AggregatedMetrics,
@@ -13,6 +14,7 @@ from crucis.execution.optimizer import (
     _build_verifier_examples,
     _prepare_isolated_workspace,
     _process_job,
+    _run_blackbox_task,
     _score_candidate_on_example,
     _should_promote,
     _target_files_for_example,
@@ -471,6 +473,38 @@ def test_score_candidate_on_example_returns_weighted_score_and_side_info(
     assert side_info["scores"]["correctness"] == 1.0
     assert side_info["scores"]["speed"] > 0.0
     assert "duration_sec" in side_info
+
+
+@patch("crucis.execution.optimizer.subprocess.run")
+def test_run_blackbox_task_injects_workspace_and_project_root_pythonpath(
+    mock_run,
+    tmp_path: Path,
+):
+    """Black-box evaluator subprocess should inherit workspace and project imports."""
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    example = {
+        "unit_kind": "task",
+        "task_name": "add",
+        "objective_snapshot": _objective().model_dump(mode="json"),
+        "train_suite_source": "def test_add():\n    assert add(1,2)==3\n",
+    }
+    _run_blackbox_task(
+        workspace=tmp_path,
+        candidate={
+            "repository_skill": "",
+            "generation_directives": "",
+            "adversary_directives": "",
+            "evaluation_directives": "",
+        },
+        example=example,
+        timeout_sec=10,
+    )
+
+    kwargs = mock_run.call_args.kwargs
+    python_path = kwargs["env"]["PYTHONPATH"].split(os.pathsep)
+    assert python_path[0] == str(tmp_path)
+    assert python_path[1] == str(Path(__file__).resolve().parents[3])
 
 
 def test_should_promote_requires_delta_and_non_regression():

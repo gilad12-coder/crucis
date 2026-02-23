@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from crucis.defaults import TEXT_ENCODING
 from crucis.models import CheckpointState, ParsedObjective, TaskProgress
 
@@ -43,4 +45,10 @@ def load_checkpoint(path: Path) -> CheckpointState | None:
     """
     if not path.exists():
         return None
-    return CheckpointState.model_validate_json(path.read_text(encoding=TEXT_ENCODING))
+    try:
+        return CheckpointState.model_validate_json(path.read_text(encoding=TEXT_ENCODING))
+    except ValidationError as exc:
+        errors = "; ".join(
+            f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        raise ValueError(f"Invalid checkpoint file {path}: {errors}") from None

@@ -34,6 +34,7 @@ The generation agent receives a prompt built from:
 - Primary and secondary constraints from the constraint profile
 - Constraint guidance text
 - Target file paths (converted to import hints)
+- Context file contents (existing code the agent needs to understand)
 - Active optimizer policy directives (if any)
 - Constraint violation feedback from prior attempts (if retrying)
 - Adversarial feedback from prior cycles (if improving)
@@ -97,7 +98,8 @@ Approved train suites from the checkpoint are written to `tests/test_<task_name>
 
 A markdown curriculum is generated from:
 - Objective metadata (name, description)
-- Target files
+- Target files and their current contents
+- Context file contents (existing code relevant to the objective)
 - Train suite file paths
 - Per-task details: signature, description, train evals, constraints, adversarial findings
 
@@ -113,7 +115,11 @@ The implementation agent (default: Codex) receives:
 
 The agent has access to Edit, Write, Read, and Bash tools and writes code directly to the target files.
 
-### Step 4: Verify Public Tests
+### Step 4: Regression Gate
+
+If `existing_tests` are configured, Crucis runs them against the implementation before verifying the generated train suites. This catches regressions in existing functionality. Files that don't exist on disk are silently skipped, so projects without active test suites are unaffected.
+
+### Step 5: Verify Public Tests
 
 Crucis runs pytest against the generated train suites. Verification mode depends on `verification_granularity`:
 
@@ -123,7 +129,7 @@ Crucis runs pytest against the generated train suites. Verification mode depends
 Tests run in the Docker sandbox by default, or on the host with `--no-sandbox`.
 Host-mode verification executes `python -m pytest` with workspace-aware import path setup.
 
-### Step 5: Verify Holdout Evals
+### Step 6: Verify Holdout Evals
 
 Hidden holdout evals are never shown to any agent. Crucis dynamically generates ephemeral pytest files that:
 1. Discover the target module from `target_files` paths
@@ -132,7 +138,7 @@ Hidden holdout evals are never shown to any agent. Crucis dynamically generates 
 
 Holdout failures are reported as counts only -- no payloads are leaked to prevent information leakage to the implementation agent during retries.
 
-### Step 6: Retry or Complete
+### Step 7: Retry or Complete
 
 If verification fails, the error output (trimmed to 1200 chars) is fed back to the implementation agent and the cycle retries. Up to `max_iterations` attempts.
 
@@ -170,7 +176,7 @@ crucis init --name my_function --no-agent
 # Generate a structured plan
 crucis plan objective.yaml
 
-# Preview generation prompts without calling agents
+# Inspect generation prompts without calling agents (dry run)
 crucis fit objective.yaml --dry-run
 
 # Fit (interactive)

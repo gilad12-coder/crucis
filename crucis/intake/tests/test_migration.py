@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 import yaml
 
 from crucis.intake.migration import (
@@ -143,3 +144,52 @@ def test_migrate_objective_data_preserves_new_profile_fields():
     assert migrated["implementation_constraint_profile"] == "recommended"
     assert migrated["tasks"][0]["tests_constraint_profile"] == "default"
     assert migrated["tasks"][0]["implementation_constraint_profile"] == "strict"
+
+
+def test_migrate_objective_without_tasks_synthesizes_default():
+    """Legacy objective with no tasks/functions should synthesize a default task."""
+    legacy = {
+        "name": "add",
+        "description": "Add two numbers",
+        "signature": "add(a, b)",
+        "examples": [{"input": "(1, 2)", "output": "3"}],
+    }
+    migrated = migrate_objective_data(legacy)
+    assert len(migrated["tasks"]) == 1
+    task = migrated["tasks"][0]
+    assert task["name"] == "add"
+    assert task["description"] == "Add two numbers"
+    assert task["signature"] == "add(a, b)"
+    assert task["train_evals"] == [{"input": "(1, 2)", "output": "3"}]
+
+
+def test_migrate_objective_file_reports_malformed_yaml(tmp_path):
+    """Malformed objective YAML should raise a concise parse error."""
+    objective_in = tmp_path / "bad.yaml"
+    objective_out = tmp_path / "objective.yaml"
+    objective_in.write_text("name: [invalid: yaml: {{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Could not parse YAML"):
+        migrate_objective_file(objective_in, objective_out)
+
+
+def test_migrate_objective_file_disables_yaml_aliases(tmp_path):
+    """Migrated objective output should not contain YAML anchors/aliases."""
+    objective_in = tmp_path / "spec.yaml"
+    objective_out = tmp_path / "objective.yaml"
+    objective_in.write_text(
+        yaml.safe_dump(
+            {
+                "name": "add",
+                "description": "Add",
+                "examples": [{"input": "(1, 2)", "output": "3"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    migrate_objective_file(objective_in, objective_out)
+    output = objective_out.read_text(encoding="utf-8")
+
+    assert "&id" not in output
+    assert "*id" not in output

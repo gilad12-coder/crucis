@@ -8,3 +8,12 @@ HOLDOUT_EVALS_KEY = "holdout_evals"
 
 NAME_KEY = "name"
 """Dictionary key for name fields in objectives and tasks."""
+
+DESCRIPTION_KEY = "description"
+"""Dictionary key for description fields in objectives and tasks."""
+
+SIGNATURE_KEY = "signature"
+"""Dictionary key for signature fields in objectives and tasks."""
+
+TASKS_KEY = "tasks"
+"""Dictionary key for task lists in objectives."""

@@ -7,6 +7,8 @@ import yaml
 
 from crucis.defaults import TEXT_ENCODING
 from crucis.intake.constants import HOLDOUT_EVALS_KEY, NAME_KEY, TRAIN_EVALS_KEY
+from pydantic import ValidationError
+
 from crucis.models import ParsedObjective, validate_holdout_eval_entries
 
 _LEGACY_OBJECTIVE_KEYS = {"examples", "public_evals", "hidden_evals", "functions"}
@@ -15,6 +17,8 @@ _MIGRATE_HINT = "crucis migrate --objective-in ... --objective-out ..."
 _VALID_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _TARGET_FILES_KEY = "target_files"
+_CONTEXT_FILES_KEY = "context_files"
+_EXISTING_TESTS_KEY = "existing_tests"
 _TASKS_KEY = "tasks"
 _LEGACY_CONSTRAINT_PROFILE_KEY = "constraint_profile"
 _TESTS_CONSTRAINT_PROFILE_KEY = "tests_constraint_profile"
@@ -29,7 +33,14 @@ def parse_objective(objective_path: Path) -> ParsedObjective:
     Returns:
         Parsed structured value.
     """
-    data = yaml.safe_load(objective_path.read_text(encoding=TEXT_ENCODING))
+    try:
+        raw = objective_path.read_text(encoding=TEXT_ENCODING)
+    except FileNotFoundError:
+        raise ValueError(f"Objective file not found: {objective_path}") from None
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Could not parse YAML in {objective_path}: {exc}") from None
     if not data:
         raise ValueError("Objective file is empty")
     if not isinstance(data, dict):
@@ -41,7 +52,13 @@ def parse_objective(objective_path: Path) -> ParsedObjective:
     _assert_valid_objective_shape(data)
     _assert_valid_eval_entries(data)
 
-    return ParsedObjective(**data)
+    try:
+        return ParsedObjective(**data)
+    except ValidationError as exc:
+        errors = "; ".join(
+            f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        raise ValueError(f"Invalid objective: {errors}") from None
 
 
 def _assert_no_legacy_objective_keys(data: dict) -> None:
@@ -141,12 +158,20 @@ def _assert_valid_objective_shape(data: dict) -> None:
 
     _validate_callable_name(data.get(NAME_KEY), NAME_KEY)
     _validate_target_files(data.get(_TARGET_FILES_KEY), _TARGET_FILES_KEY)
+    _validate_relative_paths(data.get(_CONTEXT_FILES_KEY), _CONTEXT_FILES_KEY)
+    _validate_target_files(data.get(_EXISTING_TESTS_KEY), _EXISTING_TESTS_KEY)
 
     tasks = data.get(_TASKS_KEY) or []
+    seen_names: set[str] = set()
     for idx, task in enumerate(tasks):
         _validate_callable_name(task.get(NAME_KEY), f"{_TASKS_KEY}[{idx}].{NAME_KEY}")
-        target_files = task.get(_TARGET_FILES_KEY)
-        _validate_target_files(target_files, f"{_TASKS_KEY}[{idx}].{_TARGET_FILES_KEY}")
+        task_name = task.get(NAME_KEY)
+        if task_name in seen_names:
+            raise ValueError(f"Duplicate task name '{task_name}' at {_TASKS_KEY}[{idx}]")
+        seen_names.add(task_name)
+        _validate_target_files(task.get(_TARGET_FILES_KEY), f"{_TASKS_KEY}[{idx}].{_TARGET_FILES_KEY}")
+        _validate_relative_paths(task.get(_CONTEXT_FILES_KEY), f"{_TASKS_KEY}[{idx}].{_CONTEXT_FILES_KEY}")
+        _validate_target_files(task.get(_EXISTING_TESTS_KEY), f"{_TASKS_KEY}[{idx}].{_EXISTING_TESTS_KEY}")
 
 
 def _validate_callable_name(name: object, owner: str) -> None:
@@ -163,6 +188,29 @@ def _validate_callable_name(name: object, owner: str) -> None:
             f"{owner} must be a valid Python identifier "
             "(letters, numbers, underscore; cannot start with a digit)"
         )
+
+
+def _validate_relative_paths(paths: object, owner: str) -> None:
+    """Validate paths as workspace-relative with no traversal segments.
+
+    Args:
+        paths: Raw path list from objective YAML.
+        owner: Field path used for error messages.
+    """
+    if paths is None:
+        return
+    if not isinstance(paths, list) or any(not isinstance(item, str) for item in paths):
+        raise ValueError(f"{owner} must be a list of strings")
+    for idx, raw in enumerate(paths):
+        value = raw.strip()
+        if not value:
+            raise ValueError(f"{owner}[{idx}] must be a non-empty path")
+        normalized = value.replace("\\", "/")
+        path = Path(normalized)
+        if path.is_absolute():
+            raise ValueError(f"{owner}[{idx}] must be workspace-relative, not absolute")
+        if any(part in {"..", "."} for part in path.parts):
+            raise ValueError(f"{owner}[{idx}] must not contain '.' or '..' path segments")
 
 
 def _validate_target_files(target_files: object, owner: str) -> None:

@@ -10,9 +10,13 @@ import pytest
 from crucis.__main__ import (
     build_parser,
     main,
+    run_add_eval_command,
+    run_add_task_command,
     run_doctor_command,
     run_evaluate,
+    run_init_command,
     run_optimizer_worker_command,
+    run_plan_command,
     run_promote,
     show_checkpoint,
 )
@@ -74,6 +78,43 @@ class TestBuildParser:
         assert args.command == "doctor"
         assert args.workspace == "."
         assert args.json is False
+
+    def test_init_subcommand(self):
+        """Test init subcommand defaults."""
+        parser = build_parser()
+        args = parser.parse_args(["init"])
+        assert args.command == "init"
+        assert args.workspace == "."
+        assert args.name == "my_project"
+        assert args.no_agent is False
+        assert args.require_agent is False
+        assert args.agent is None
+
+    def test_init_subcommand_with_flags(self):
+        """Test init subcommand with explicit flags."""
+        parser = build_parser()
+        args = parser.parse_args(
+            ["init", "--name", "foo", "--workspace", "/tmp", "--no-agent", "--require-agent"]
+        )
+        assert args.name == "foo"
+        assert args.workspace == "/tmp"
+        assert args.no_agent is True
+        assert args.require_agent is True
+
+    def test_plan_subcommand(self):
+        """Test plan subcommand defaults."""
+        parser = build_parser()
+        args = parser.parse_args(["plan", "objective.yaml"])
+        assert args.command == "plan"
+        assert args.objective_path == "objective.yaml"
+        assert args.profiles == "constraints/profiles.yaml"
+        assert args.force is False
+
+    def test_plan_subcommand_force(self):
+        """Test plan subcommand force flag."""
+        parser = build_parser()
+        args = parser.parse_args(["plan", "objective.yaml", "--force"])
+        assert args.force is True
 
     def test_optimizer_worker_subcommand(self):
         """Test optimizer-worker subcommand."""
@@ -239,6 +280,51 @@ class TestMainDispatch:
         mock_migrate_obj.assert_called_once_with(Path("old.yaml"), Path("new.yaml"))
         mock_migrate_cp.assert_called_once_with(Path("old.json"), Path("new.json"))
 
+    def test_main_migrate_malformed_yaml_prints_clean_error(self, tmp_path, capsys):
+        """migrate should report parse errors without a traceback."""
+        objective_in = tmp_path / "bad.yaml"
+        objective_out = tmp_path / "objective.yaml"
+        objective_in.write_text("name: [invalid: yaml: {{", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as exc:
+            main(
+                [
+                    "migrate",
+                    "--objective-in",
+                    str(objective_in),
+                    "--objective-out",
+                    str(objective_out),
+                ]
+            )
+
+        assert exc.value.code == 1
+        output = capsys.readouterr().out
+        assert "Could not parse YAML" in output
+        assert "Traceback" not in output
+
+    @patch("crucis.__main__.run_init_command")
+    def test_main_init_calls_run_init_command(self, mock_init):
+        """Init command should dispatch to init handler.
+
+        Args:
+            mock_init: Mock object for init command handler.
+        """
+        main(["init"])
+        assert mock_init.call_count == 1
+
+    @patch("crucis.__main__.run_plan_command")
+    def test_main_plan_calls_run_plan_command(self, mock_plan, tmp_path):
+        """Plan command should dispatch to plan handler.
+
+        Args:
+            mock_plan: Mock object for plan command handler.
+            tmp_path: Temporary directory provided by pytest.
+        """
+        objective = tmp_path / "objective.yaml"
+        objective.write_text("name: add\ndescription: Add", encoding="utf-8")
+        main(["plan", str(objective)])
+        assert mock_plan.call_count == 1
+
     @patch("crucis.__main__.run_promote")
     def test_main_promote_calls_run_promote(self, mock_promote):
         """Test main promote calls run promote.
@@ -264,6 +350,15 @@ class TestMainDispatch:
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
         with pytest.raises(SystemExit):
             main(["fit", str(objective), "--session", "x.json"])
+
+    def test_legacy_preview_command_shows_replacement_hint(self, capsys):
+        """Legacy preview command should redirect users to fit --dry-run."""
+        with pytest.raises(SystemExit) as exc:
+            main(["preview", "objective.yaml"])
+        assert exc.value.code == 2
+        output = capsys.readouterr().out
+        assert "crucis fit <objective.yaml>" in output
+        assert "--dry-run" in output
 
 
 @patch("crucis.__main__.load_checkpoint")
@@ -528,3 +623,378 @@ def test_run_optimizer_worker_command_json_output(mock_run_worker, capsys):
     payload = json.loads(output)
     assert payload["exit_code"] == 0
     assert payload["mode"] == "once"
+
+
+# ---------------------------------------------------------------------------
+# objective mutation command tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_add_task_invalid_name_rolls_back_file(tmp_path):
+    """add-task should not modify objective file when validation fails."""
+    objective = tmp_path / "objective.yaml"
+    original = "name: add\ndescription: Add numbers\ntrain_evals:\n  - input: \"(1, 2)\"\n    output: \"3\"\n"
+    objective.write_text(original, encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(objective),
+            "name": "bad-name",
+            "description": None,
+            "signature": None,
+        },
+    )()
+
+    with pytest.raises(SystemExit) as exc:
+        run_add_task_command(args)
+
+    assert exc.value.code == 1
+    assert objective.read_text(encoding="utf-8") == original
+
+
+@patch("crucis.__main__.parse_objective", side_effect=ValueError("synthetic validation failure"))
+def test_run_add_eval_validation_failure_rolls_back_file(_mock_parse, tmp_path):
+    """add-eval should not modify objective file when post-write validation fails."""
+    objective = tmp_path / "objective.yaml"
+    original = (
+        "name: add\n"
+        "description: Add numbers\n"
+        "train_evals:\n"
+        "  - input: \"(1, 2)\"\n"
+        "    output: \"3\"\n"
+    )
+    objective.write_text(original, encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(objective),
+            "task": None,
+            "eval_input": "(2, 3)",
+            "eval_output": "5",
+        },
+    )()
+
+    with pytest.raises(SystemExit) as exc:
+        run_add_eval_command(args)
+
+    assert exc.value.code == 1
+    assert objective.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
+# init command handler tests
+# ---------------------------------------------------------------------------
+
+
+@patch("crucis.__main__.scaffold_workspace")
+def test_run_init_command_no_agent_scaffolds_workspace(mock_scaffold, tmp_path, capsys):
+    """Init with --no-agent should call scaffold_workspace and report files.
+
+    Args:
+        mock_scaffold: Mock object for scaffold_workspace.
+        tmp_path: Temporary directory provided by pytest.
+        capsys: Pytest capture fixture.
+    """
+    created = [tmp_path / "objective.yaml", tmp_path / ".crucis" / "settings.yaml"]
+    mock_scaffold.return_value = created
+
+    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": True, "name": "foo"})()
+    run_init_command(args)
+
+    mock_scaffold.assert_called_once_with(tmp_path.resolve(), name="foo")
+    output = capsys.readouterr().out
+    assert "objective.yaml" in output
+
+
+@patch("crucis.__main__.scaffold_workspace", return_value=[])
+def test_run_init_command_already_initialized(_mock_scaffold, tmp_path, capsys):
+    """Init should report already initialized when scaffold returns no files.
+
+    Args:
+        _mock_scaffold: Mock for scaffold_workspace returning empty list.
+        tmp_path: Temporary directory provided by pytest.
+        capsys: Pytest capture fixture.
+    """
+    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": True, "name": "x"})()
+    run_init_command(args)
+
+    output = capsys.readouterr().out
+    assert "already initialized" in output
+
+
+@patch("crucis.__main__.scaffold_workspace")
+@patch("crucis.__main__._try_agent_onboarding", return_value=False)
+def test_run_init_command_agent_fallback(mock_try_agent, mock_scaffold, tmp_path):
+    """Init should fall back to static scaffolding when agent onboarding fails.
+
+    Args:
+        mock_try_agent: Mock for agent onboarding returning False.
+        mock_scaffold: Mock object for scaffold_workspace.
+        tmp_path: Temporary directory provided by pytest.
+    """
+    mock_scaffold.return_value = [tmp_path / "objective.yaml"]
+    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": False, "name": "p"})()
+    run_init_command(args)
+
+    mock_try_agent.assert_called_once()
+    mock_scaffold.assert_called_once()
+
+
+@patch("crucis.__main__.scaffold_workspace")
+def test_run_init_command_rejects_no_agent_with_require_agent(mock_scaffold, tmp_path):
+    """Init should reject mutually exclusive --no-agent and --require-agent."""
+    args = type(
+        "Args",
+        (),
+        {
+            "workspace": str(tmp_path),
+            "no_agent": True,
+            "require_agent": True,
+            "name": "p",
+            "agent": None,
+        },
+    )()
+
+    with pytest.raises(SystemExit) as exc:
+        run_init_command(args)
+
+    assert exc.value.code == 2
+    assert mock_scaffold.call_count == 0
+
+
+@patch("crucis.__main__.scaffold_workspace")
+@patch("crucis.__main__._is_interactive_terminal", return_value=False)
+def test_run_init_command_non_interactive_falls_back_to_static(
+    _mock_tty,
+    mock_scaffold,
+    tmp_path,
+):
+    """Init should skip onboarding and scaffold templates in non-interactive shells."""
+    mock_scaffold.return_value = [tmp_path / "objective.yaml"]
+    args = type(
+        "Args",
+        (),
+        {
+            "workspace": str(tmp_path),
+            "no_agent": False,
+            "require_agent": False,
+            "name": "p",
+            "agent": "claude",
+        },
+    )()
+
+    run_init_command(args)
+
+    assert mock_scaffold.call_count == 1
+
+
+@patch("crucis.__main__.scaffold_workspace")
+@patch("crucis.__main__._is_interactive_terminal", return_value=False)
+def test_run_init_command_require_agent_exits_in_non_interactive_shell(
+    _mock_tty,
+    mock_scaffold,
+    tmp_path,
+):
+    """Init with --require-agent should fail in non-interactive shells."""
+    args = type(
+        "Args",
+        (),
+        {
+            "workspace": str(tmp_path),
+            "no_agent": False,
+            "require_agent": True,
+            "name": "p",
+            "agent": "claude",
+        },
+    )()
+
+    with pytest.raises(SystemExit) as exc:
+        run_init_command(args)
+
+    assert exc.value.code == 1
+    assert mock_scaffold.call_count == 0
+
+
+@patch("crucis.__main__.scaffold_workspace")
+@patch("crucis.__main__._is_interactive_terminal", return_value=True)
+@patch("shutil.which", return_value=None)
+def test_run_init_command_require_agent_exits_when_agent_missing(
+    _mock_which,
+    _mock_tty,
+    mock_scaffold,
+    tmp_path,
+):
+    """Init with --require-agent should fail when agent binary is missing."""
+    args = type(
+        "Args",
+        (),
+        {
+            "workspace": str(tmp_path),
+            "no_agent": False,
+            "require_agent": True,
+            "name": "p",
+            "agent": "claude",
+        },
+    )()
+
+    with pytest.raises(SystemExit) as exc:
+        run_init_command(args)
+
+    assert exc.value.code == 1
+    assert mock_scaffold.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# plan command handler tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_plan_command_missing_objective_exits(tmp_path):
+    """Plan should exit 1 when objective file does not exist.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(tmp_path / "missing.yaml"),
+            "profiles": "constraints/profiles.yaml",
+            "workspace": str(tmp_path),
+            "force": False,
+        },
+    )()
+    with pytest.raises(SystemExit) as exc:
+        run_plan_command(args)
+    assert exc.value.code == 1
+
+
+def test_run_plan_command_existing_plan_without_force_exits(tmp_path):
+    """Plan should exit 1 when plan.md exists and --force is not set.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective = tmp_path / "objective.yaml"
+    objective.write_text("name: add\ndescription: Add", encoding="utf-8")
+    (tmp_path / "plan.md").write_text("existing plan", encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(objective),
+            "profiles": "constraints/profiles.yaml",
+            "workspace": str(tmp_path),
+            "force": False,
+        },
+    )()
+    with pytest.raises(SystemExit) as exc:
+        run_plan_command(args)
+    assert exc.value.code == 1
+
+
+@patch("crucis.__main__.write_plan_to_workspace")
+@patch("crucis.__main__.build_generation_plan", return_value="# Plan content")
+@patch("crucis.__main__.load_profiles", return_value={"recommended": {"primary": {}}})
+@patch("crucis.__main__.resolve_constraints")
+@patch("crucis.__main__.parse_objective")
+@patch("crucis.__main__._ensure_runtime_settings")
+def test_run_plan_command_calls_build_generation_plan(
+    _mock_settings,
+    mock_parse,
+    mock_resolve,
+    mock_load_profiles,
+    mock_build_plan,
+    mock_write_plan,
+    tmp_path,
+):
+    """Plan should parse objective, resolve constraints, and write plan file.
+
+    Args:
+        _mock_settings: Mock for runtime settings validation.
+        mock_parse: Mock object for parse_objective.
+        mock_resolve: Mock object for resolve_constraints.
+        mock_load_profiles: Mock object for load_profiles.
+        mock_build_plan: Mock object for build_generation_plan.
+        mock_write_plan: Mock object for write_plan_to_workspace.
+        tmp_path: Temporary directory provided by pytest.
+    """
+    from crucis.models import ParsedObjective, TaskObjective
+
+    objective = tmp_path / "objective.yaml"
+    objective.write_text("name: add\ndescription: Add", encoding="utf-8")
+    profiles = tmp_path / "constraints" / "profiles.yaml"
+    profiles.parent.mkdir()
+    profiles.write_text("profiles: {}", encoding="utf-8")
+
+    task = TaskObjective(name="add", description="Add numbers")
+    mock_parse.return_value = ParsedObjective(
+        name="add", description="Add numbers", tasks=[task]
+    )
+    mock_write_plan.return_value = tmp_path / "plan.md"
+
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(objective),
+            "profiles": str(profiles),
+            "workspace": str(tmp_path),
+            "force": False,
+        },
+    )()
+    run_plan_command(args)
+
+    mock_build_plan.assert_called_once()
+    mock_write_plan.assert_called_once()
+
+
+@patch("crucis.__main__.write_plan_to_workspace")
+@patch("crucis.__main__.build_generation_plan", return_value="# Plan content")
+@patch("crucis.__main__.load_profiles", return_value={"recommended": {"primary": {}}})
+@patch("crucis.__main__.resolve_constraints")
+@patch("crucis.__main__.parse_objective")
+@patch("crucis.__main__._ensure_runtime_settings")
+def test_run_plan_command_single_objective_resolves_constraints_for_objective_name(
+    _mock_settings,
+    mock_parse,
+    mock_resolve,
+    _mock_load_profiles,
+    mock_build_plan,
+    _mock_write_plan,
+    tmp_path,
+):
+    """Plan should build constraint map from objective name when tasks are omitted."""
+    from crucis.models import ParsedObjective
+
+    objective = tmp_path / "objective.yaml"
+    objective.write_text("name: add\ndescription: Add", encoding="utf-8")
+    profiles = tmp_path / "constraints" / "profiles.yaml"
+    profiles.parent.mkdir()
+    profiles.write_text("profiles: {}", encoding="utf-8")
+
+    mock_parse.return_value = ParsedObjective(name="add", description="Add numbers")
+    mock_resolve.return_value = {"primary": {}}  # type: ignore[assignment]
+
+    args = type(
+        "Args",
+        (),
+        {
+            "objective_path": str(objective),
+            "profiles": str(profiles),
+            "workspace": str(tmp_path),
+            "force": False,
+        },
+    )()
+    run_plan_command(args)
+
+    assert mock_resolve.call_count == 1
+    assert mock_resolve.call_args.args[2] == "add"
+    constraints_map = mock_build_plan.call_args.args[1]
+    assert list(constraints_map.keys()) == ["add"]

@@ -65,8 +65,6 @@
 {% for item in constraints.guidance %}
   - {{ item }}
 {% endfor %}
-{% else %}
-{{ NONE_PLACEHOLDER }}
 {% endif %}
 {% endmacro %}
 
@@ -112,9 +110,11 @@ Primary constraints:
 Secondary constraints:
 {{ secondary_constraints(constraints) }}
 
+{% if constraints.guidance %}
 Guidance to enforce:
 {{ guidance(constraints) }}
 
+{% endif %}
 {% endif %}
 {% endmacro %}
 

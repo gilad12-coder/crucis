@@ -55,7 +55,7 @@ crucis plan objective.yaml
 
 Creates `plan.md` — a structured generation plan that guides the test generation agent. This step is optional but improves first-attempt quality for complex objectives.
 
-### 4. Preview Prompts (Optional)
+### 4. Inspect Dry-Run Prompts (Optional)
 
 ```bash
 crucis fit objective.yaml --dry-run

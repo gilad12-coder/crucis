@@ -20,7 +20,7 @@ schema_version: 1
 # Background optimizer (optional — requires an OpenAI API key).
 # The optimizer refines generation prompts after each fit run.
 optimizer:
-  enabled: true
+  enabled: false
   reflection_lm: openai/gpt-5.1  # LiteLLM model string for optimizer reflection
   max_metric_calls: 24
   train_split_ratio: 0.7
@@ -65,6 +65,39 @@ _TEMPLATES: dict[str, dict] = {
             }
         ],
     },
+    "calculator": {
+        "description": "Basic integer calculator with add, subtract, and multiply.",
+        "tasks": [
+            {
+                "name": "add",
+                "description": "Return the sum of two integers.",
+                "signature": "add(a: int, b: int) -> int",
+                "train_evals": [
+                    {"input": "(1, 2)", "output": "3"},
+                    {"input": "(0, 0)", "output": "0"},
+                    {"input": "(-1, 1)", "output": "0"},
+                ],
+            },
+            {
+                "name": "subtract",
+                "description": "Return the difference of two integers.",
+                "signature": "subtract(a: int, b: int) -> int",
+                "train_evals": [
+                    {"input": "(5, 3)", "output": "2"},
+                    {"input": "(0, 0)", "output": "0"},
+                ],
+            },
+            {
+                "name": "multiply",
+                "description": "Return the product of two integers.",
+                "signature": "multiply(a: int, b: int) -> int",
+                "train_evals": [
+                    {"input": "(3, 4)", "output": "12"},
+                    {"input": "(0, 5)", "output": "0"},
+                ],
+            },
+        ],
+    },
 }
 
 
@@ -88,19 +121,20 @@ def _build_objective(name: str) -> dict:
         }
     return {
         "name": name,
-        "description": f"Describe what {name} should do.",
-        "signature": f"{name}(x: int) -> int",
+        "description": f"Compute double of the input integer.",
+        "signature": f"{name}(n: int) -> int",
         "tests_constraint_profile": _RECOMMENDED_PROFILE,
         "implementation_constraint_profile": _RECOMMENDED_PROFILE,
         "target_files": ["src/solution.py"],
         "tasks": [
             {
                 "name": name,
-                "description": f"Implement {name}.",
-                "signature": f"{name}(x: int) -> int",
+                "description": f"Return 2 * n.",
+                "signature": f"{name}(n: int) -> int",
                 "train_evals": [
-                    {"input": "(1,)", "output": "1"},
+                    {"input": "(1,)", "output": "2"},
                     {"input": "(2,)", "output": "4"},
+                    {"input": "(3,)", "output": "6"},
                 ],
             }
         ],
@@ -109,6 +143,14 @@ def _build_objective(name: str) -> dict:
 
 _DEFAULT_PROFILES = {
     "profiles": {
+        "default": {
+            "primary": {
+                "max_cyclomatic_complexity": 10,
+            },
+            "secondary": {
+                "require_docstrings": True,
+            },
+        },
         "recommended": {
             "primary": {
                 "max_cyclomatic_complexity": 10,
@@ -249,6 +291,10 @@ tests_constraint_profile: recommended   # profile name from profiles.yaml
 implementation_constraint_profile: recommended
 target_files:
   - src/solution.py
+context_files:          # optional: existing files injected into prompts for context
+  - src/helpers.py
+existing_tests:         # optional: test files run as a regression gate during evaluation
+  - tests/test_existing.py
 tasks:
   - name: <task_name>
     description: <what this task does>

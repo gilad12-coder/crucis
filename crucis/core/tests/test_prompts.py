@@ -116,3 +116,19 @@ def test_policy_injection_appears_in_prompt_sections():
     assert "Stage directives (generation)" in generation_prompt
     assert "Stage directives (adversary)" in adversary_prompt
     assert "Stage directives (evaluation)" in evaluation_prompt
+
+
+def test_generation_prompt_includes_context_files_content():
+    """Generation prompt should render context file contents when provided."""
+    context = {"src/helpers.py": "def helper(): return 42\n"}
+    prompt = build_generation_prompt(
+        _objective(), _constraints(), context_files_content=context
+    )
+    assert "src/helpers.py" in prompt
+    assert "def helper()" in prompt
+
+
+def test_generation_prompt_omits_context_section_when_empty():
+    """Generation prompt without context files should not include context section."""
+    prompt = build_generation_prompt(_objective(), _constraints())
+    assert "Code context" not in prompt

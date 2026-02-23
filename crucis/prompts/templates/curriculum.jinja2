@@ -14,6 +14,32 @@
 {% endfor %}
 
 {% endif %}
+{% if context_files_content %}
+## Code Context
+
+These files contain existing code relevant to the objective. Understand their structure before implementing.
+
+{% for path, content in context_files_content.items() %}
+### {{ path }}
+```{{ path.split('.')[-1] }}
+{{ content }}
+```
+
+{% endfor %}
+{% endif %}
+{% if target_files_content %}
+## Current Target File Contents
+
+These are the files you will modify. Preserve existing functionality unless the objective requires changes.
+
+{% for path, content in target_files_content.items() %}
+### {{ path }}
+```python
+{{ content }}
+```
+
+{% endfor %}
+{% endif %}
 ## Train Suite Files
 
 {% for progress in completed_tasks %}

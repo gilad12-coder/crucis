@@ -10,10 +10,13 @@ from crucis.config import Config
 from crucis.core.loop import (
     _build_holdout_eval_test_source,
     _check_implementation_constraints,
+    _collect_existing_test_paths,
     _collect_holdout_eval_specs,
     _module_candidates_from_targets,
     _objective_for_task,
+    _read_task_context_files,
     _run_pytest_targets,
+    _validate_task_names,
     _verify_tests,
     process_task,
     run_evaluation,
@@ -114,6 +117,23 @@ def test_objective_for_task_falls_back_to_top_level_when_missing():
     assert resolved.train_evals[0].input == "(1, 1)"
     assert resolved.holdout_evals[0].input == "(2, 2)"
     assert resolved.target_files == []
+
+
+def test_validate_task_names_accepts_single_objective_name():
+    """Single-objective specs should accept --task=<objective-name> filters."""
+    objective = ParsedObjective(name="add", description="Add numbers")
+    _validate_task_names(objective, ["add"])
+
+
+def test_validate_task_names_rejects_unknown_for_single_objective():
+    """Single-objective specs should reject unknown --task filters."""
+    objective = ParsedObjective(name="add", description="Add numbers")
+    try:
+        _validate_task_names(objective, ["subtract"])
+    except ValueError as exc:
+        assert "Unknown task(s): subtract. Known: add" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unknown task filter")
 
 
 @patch("crucis.core.loop._run_pytest_targets")
@@ -723,3 +743,177 @@ def test_run_evaluation_retries_on_implementation_constraint_failure(
     assert passed is True
     assert mock_check_impl.call_count == 2
     assert mock_run.call_count == 2
+
+
+def test_read_task_context_files_aggregates_objective_and_task_level(tmp_path):
+    """Context reader should merge objective-level and task-level context_files.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    (tmp_path / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("B = 2\n", encoding="utf-8")
+
+    objective = ParsedObjective(
+        name="calc",
+        description="calc",
+        context_files=["a.py"],
+        tasks=[TaskObjective(name="add", context_files=["b.py"])],
+    )
+    result = _read_task_context_files(objective, tmp_path)
+    assert "a.py" in result
+    assert "b.py" in result
+
+
+def test_read_task_context_files_returns_empty_without_workspace():
+    """Context reader should return empty dict when workspace is None."""
+    objective = ParsedObjective(
+        name="calc", description="calc", context_files=["a.py"]
+    )
+    result = _read_task_context_files(objective, None)
+    assert result == {}
+
+
+def test_read_task_context_files_returns_empty_when_no_context_files():
+    """Context reader should return empty dict when no context_files are set."""
+    objective = ParsedObjective(name="calc", description="calc")
+    result = _read_task_context_files(objective, Path("/tmp"))
+    assert result == {}
+
+
+def test_collect_existing_test_paths_finds_existing_files(tmp_path):
+    """Collector should return paths for files that exist on disk.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text("pass\n", encoding="utf-8")
+
+    objective = ParsedObjective(
+        name="calc",
+        description="calc",
+        existing_tests=["tests/test_a.py", "tests/test_missing.py"],
+    )
+    result = _collect_existing_test_paths(objective, tmp_path)
+    assert len(result) == 1
+    assert result[0] == tmp_path / "tests" / "test_a.py"
+
+
+def test_collect_existing_test_paths_deduplicates(tmp_path):
+    """Collector should not return duplicate paths from objective and tasks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_shared.py").write_text("pass\n", encoding="utf-8")
+
+    objective = ParsedObjective(
+        name="calc",
+        description="calc",
+        existing_tests=["tests/test_shared.py"],
+        tasks=[TaskObjective(name="add", existing_tests=["tests/test_shared.py"])],
+    )
+    result = _collect_existing_test_paths(objective, tmp_path)
+    assert len(result) == 1
+
+
+@patch("crucis.core.loop._collect_existing_test_paths")
+@patch("crucis.core.loop._run_pytest_targets")
+@patch("crucis.core.loop._verify_tests", return_value=(True, ""))
+@patch(
+    "crucis.core.loop.build_implementation_command",
+    side_effect=lambda prompt, _a, _m: ["agent", prompt],
+)
+@patch("crucis.core.loop.subprocess.run")
+def test_run_evaluation_regression_gate_retries_on_failure(
+    mock_run,
+    _mock_build_cmd,
+    _mock_verify,
+    mock_pytest,
+    mock_collect,
+    tmp_path,
+):
+    """Evaluation should retry when existing tests fail as regression gate.
+
+    Args:
+        mock_run: Mock for subprocess invocation.
+        _mock_build_cmd: Unused mock for build_cmd.
+        _mock_verify: Unused mock for verify.
+        mock_pytest: Mock for _run_pytest_targets.
+        mock_collect: Mock for _collect_existing_test_paths.
+        tmp_path: Temporary directory provided by pytest.
+    """
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_collect.return_value = [tmp_path / "tests" / "test_existing.py"]
+    mock_pytest.side_effect = [
+        (False, "FAILED test_existing.py"),
+        (True, "all passed"),
+    ]
+
+    state = CheckpointState(
+        task_progress=[
+            TaskProgress(
+                name="add",
+                status=TrainingStatus.complete,
+                train_suite_source="def test_add():\n    assert add(1,2)==3",
+            )
+        ]
+    )
+    passed = run_evaluation(
+        state,
+        _config(),
+        test_dir=tmp_path / "tests",
+        objective=_objective(),
+    )
+    assert passed is True
+    assert mock_run.call_count == 2
+    assert mock_pytest.call_count == 2
+
+
+@patch("crucis.core.loop._collect_existing_test_paths")
+@patch("crucis.core.loop._verify_tests", return_value=(True, ""))
+@patch(
+    "crucis.core.loop.build_implementation_command",
+    side_effect=lambda prompt, _a, _m: ["agent", prompt],
+)
+@patch("crucis.core.loop.subprocess.run")
+def test_run_evaluation_skips_regression_gate_when_no_existing_tests(
+    mock_run,
+    _mock_build_cmd,
+    _mock_verify,
+    mock_collect,
+    tmp_path,
+):
+    """Evaluation should skip regression gate when no existing tests are configured.
+
+    Args:
+        mock_run: Mock for subprocess invocation.
+        _mock_build_cmd: Unused mock for build_cmd.
+        _mock_verify: Unused mock for verify.
+        mock_collect: Mock for _collect_existing_test_paths.
+        tmp_path: Temporary directory provided by pytest.
+    """
+    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_collect.return_value = []
+
+    state = CheckpointState(
+        task_progress=[
+            TaskProgress(
+                name="add",
+                status=TrainingStatus.complete,
+                train_suite_source="def test_add():\n    assert add(1,2)==3",
+            )
+        ]
+    )
+    passed = run_evaluation(
+        state,
+        _config(),
+        test_dir=tmp_path / "tests",
+        objective=_objective(),
+    )
+    assert passed is True
+    assert mock_run.call_count == 1

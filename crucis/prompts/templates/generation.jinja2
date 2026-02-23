@@ -12,6 +12,17 @@ Target files:
 
 Import the callable from the target module shown above. Do NOT guess module names.
 
+{% if context_files_content %}
+Code context (existing files relevant to this objective):
+
+{% for path, content in context_files_content.items() %}
+### {{ path }}
+```{{ path.split('.')[-1] }}
+{{ content }}
+```
+
+{% endfor %}
+{% endif %}
 Train evals:
 {{ train_evals(objective) }}
 Primary constraints:
@@ -20,9 +31,11 @@ Primary constraints:
 Secondary constraints:
 {{ secondary_constraints(constraints) }}
 
+{% if constraints.guidance %}
 Guidance:
 {{ guidance(constraints) }}
 
+{% endif %}
 {% if plan_content %}
 GENERATION PLAN (follow this structure closely):
 {{ plan_content }}

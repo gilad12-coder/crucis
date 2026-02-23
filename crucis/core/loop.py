@@ -4,6 +4,7 @@ __all__ = [
     "_append_unique",
     "_bounded_excerpt",
     "_build_curriculum_for_evaluation",
+    "_collect_existing_test_paths",
     "_build_holdout_eval_test_source",
     "_check_implementation_constraints",
     "_collect_holdout_eval_specs",
@@ -20,6 +21,7 @@ __all__ = [
     "_module_candidates_from_targets",
     "_objective_for_task",
     "_open_in_editor",
+    "_read_task_context_files",
     "_redacted_holdout_failure_feedback",
     "_report_constraint_violations",
     "_resolve_probe_result",
@@ -65,7 +67,7 @@ from crucis.core.adversary import (
     verify_probe_with_holdout_evals,
 )
 from crucis.core.constants import HOST_PYTEST_TIMEOUT_SEC
-from crucis.core.curriculum import build_curriculum, write_curriculum_to_workspace
+from crucis.core.curriculum import build_curriculum, read_context_files, write_curriculum_to_workspace
 from crucis.core.planner import load_plan
 from crucis.core.prompts import build_evaluation_prompt, build_generation_prompt
 from crucis.core.test_generator import extract_python_from_response
@@ -81,6 +83,7 @@ from crucis.display import (
     display_sandbox_status,
     display_spinner_context,
     display_task_header,
+    display_test_failure_output,
     display_train_suite_source,
     display_workspace,
 )
@@ -102,6 +105,57 @@ from crucis.persistence.policy import OptimizerPolicy, load_active_policy
 _PYTHONPATH_ENV = "PYTHONPATH"
 _SCOPE_TESTS = "tests"
 _VALID_UNIT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _read_task_context_files(
+    objective: ParsedObjective,
+    workspace: Path | None,
+) -> dict[str, str]:
+    """Read context files from objective and all tasks.
+
+    Args:
+        objective: Parsed objective data for the current run.
+        workspace: Workspace root directory.
+
+    Returns:
+        Dict mapping relative path to file contents, empty when workspace is None.
+    """
+    if workspace is None:
+        return {}
+    all_paths = list(objective.context_files)
+    for task in objective.tasks:
+        all_paths.extend(task.context_files)
+    if not all_paths:
+        return {}
+    return read_context_files(workspace, all_paths)
+
+
+def _collect_existing_test_paths(
+    objective: ParsedObjective,
+    workspace: Path,
+) -> list[Path]:
+    """Collect existing_tests from objective and tasks, filter to files that exist.
+
+    Args:
+        objective: Parsed objective data for the current run.
+        workspace: Workspace root directory.
+
+    Returns:
+        Absolute paths to existing test files on disk.
+    """
+    all_rel: list[str] = list(objective.existing_tests)
+    for task in objective.tasks:
+        all_rel.extend(task.existing_tests)
+    seen: set[str] = set()
+    result: list[Path] = []
+    for rel in all_rel:
+        if rel in seen:
+            continue
+        seen.add(rel)
+        full = workspace / rel
+        if full.is_file():
+            result.append(full)
+    return result
 
 
 def _load_fit_context(
@@ -153,7 +207,7 @@ def run_fit(
     _validate_task_names(objective, task_names)
 
     if dry_run:
-        _display_dry_run(objective, profiles, active_policy, plan_content, task_names)
+        _display_dry_run(objective, profiles, active_policy, plan_content, task_names, workspace)
         return CheckpointState(task_progress=[])
 
     checkpoint_path, state = _load_or_create_checkpoint(workspace, checkpoint_path, objective)
@@ -256,6 +310,7 @@ def _display_dry_run(
     policy: OptimizerPolicy | None,
     plan_content: str,
     task_names: list[str] | None = None,
+    workspace: Path | None = None,
 ) -> None:
     """Build and display generation prompts for selected tasks.
 
@@ -265,9 +320,18 @@ def _display_dry_run(
         policy: Active optimizer policy used for prompt steering.
         plan_content: Optional structured plan to guide generation.
         task_names: Optional list of task names to display; None means all.
+        workspace: Workspace root for reading context files.
     """
+    from crucis.config import Config
+
+    config = Config()
+    context_files_content = _read_task_context_files(objective, workspace)
     filter_set = set(task_names) if task_names else None
     tasks = objective.tasks or [objective]
+    print(f"Objective: {objective.name} ({len(tasks)} task(s))")
+    if workspace:
+        print(f"Workspace: {workspace}")
+    print(f"Agent: {config.generation_agent} / {config.generation_model or 'default'}")
     shown = 0
     for task in tasks:
         if filter_set and task.name not in filter_set:
@@ -279,9 +343,14 @@ def _display_dry_run(
             constraints,
             policy=policy,
             plan_content=plan_content,
+            context_files_content=context_files_content,
         )
         display_dry_run_prompt(task.name, prompt)
         shown += 1
+    if objective.existing_tests:
+        print(f"\nRegression gate: {len(objective.existing_tests)} existing test file(s) configured.")
+    if objective.context_files:
+        print(f"Context files: {len(objective.context_files)} file(s) will be injected into prompts.")
     print(f"\nDry run complete ({shown} task(s)). No agents were invoked.")
 
 
@@ -403,6 +472,7 @@ def _run_fit_tasks(
             policy=policy,
             logger=logger,
             plan_content=plan_content,
+            workspace=workspace,
         )
     display_fit_complete(state, objective_path=str(objective_path))
 
@@ -420,6 +490,7 @@ def _process_fit_task(
     policy: OptimizerPolicy | None,
     logger: EventLogger,
     plan_content: str = "",
+    workspace: Path | None = None,
 ) -> None:
     """Run one fit task iteration and persist the checkpoint.
 
@@ -436,6 +507,7 @@ def _process_fit_task(
         policy: Active optimizer policy used for prompt steering.
         logger: Run event logger.
         plan_content: Optional structured plan to guide generation.
+        workspace: Workspace root for reading context files.
     """
     progress = state.task_progress[index]
     logger.emit("task_started", task=progress.name, attempt=index + 1, max_attempts=total)
@@ -452,6 +524,7 @@ def _process_fit_task(
             policy=policy,
             logger=logger,
             plan_content=plan_content,
+            workspace=workspace,
         )
     except Exception as exc:
         logger.emit("task_failed", task=progress.name, success=False, message=str(exc))
@@ -502,6 +575,7 @@ def process_task(
     policy: OptimizerPolicy | None = None,
     logger: EventLogger | None = None,
     plan_content: str = "",
+    workspace: Path | None = None,
 ) -> TaskProgress:
     """Generate and review train suites for one task, then adversarially probe.
 
@@ -515,11 +589,13 @@ def process_task(
         policy: Active optimizer policy used for prompt steering.
         logger: Optional event logger for structured telemetry.
         plan_content: Optional structured plan to guide generation.
+        workspace: Workspace root for reading context files.
 
     Returns:
         Task progress for the processed task.
     """
     task_objective = _objective_for_task(objective, task_name)
+    context_files_content = _read_task_context_files(objective, workspace)
     max_attempts = max(config.max_iterations, 1)
 
     max_adversary_cycles = 2 if auto_adversary else max_attempts
@@ -536,6 +612,7 @@ def process_task(
             policy=policy,
             logger=logger,
             plan_content=plan_content,
+            context_files_content=context_files_content,
         )
         with display_spinner_context("Running adversarial review..."):
             report = run_adversarial_review(
@@ -746,6 +823,7 @@ def _generate_and_approve(
     policy: OptimizerPolicy | None = None,
     logger: EventLogger | None = None,
     plan_content: str = "",
+    context_files_content: dict[str, str] | None = None,
 ) -> str:
     """Run generate -> validate -> review loop until train suite is approved.
 
@@ -759,6 +837,7 @@ def _generate_and_approve(
         policy: Active optimizer policy used for prompt steering.
         logger: Optional event logger for structured telemetry.
         plan_content: Optional structured plan to guide generation.
+        context_files_content: Existing file contents keyed by relative path.
 
     Returns:
         Approved train-suite source code.
@@ -778,6 +857,7 @@ def _generate_and_approve(
             attempt=n,
             max_attempts=max_attempts,
             plan_content=plan_content,
+            context_files_content=context_files_content,
         )
         if not train_suite_source:
             display_error(f"Attempt {n}/{max_attempts}: agent returned no output. Retrying...")
@@ -817,6 +897,7 @@ def generate_tests(
     attempt: int = 1,
     max_attempts: int = 1,
     plan_content: str = "",
+    context_files_content: dict[str, str] | None = None,
 ) -> str:
     """Generate pytest train-suite source for a parsed objective.
 
@@ -830,6 +911,7 @@ def generate_tests(
         attempt: Current generation attempt number (1-based).
         max_attempts: Maximum number of generation attempts.
         plan_content: Optional structured plan to guide generation.
+        context_files_content: Existing file contents keyed by relative path.
 
     Returns:
         Computed text result for this operation.
@@ -841,6 +923,7 @@ def generate_tests(
         adversary_feedback,
         policy=policy,
         plan_content=plan_content,
+        context_files_content=context_files_content,
     )
     spinner_msg = f"Generating train suite (attempt {attempt}/{max_attempts})..."
     with display_spinner_context(spinner_msg):
@@ -1164,10 +1247,28 @@ def _run_evaluation_attempts(
             )
             if not impl_ok:
                 error_feedback = impl_feedback
+                display_test_failure_output(error_feedback)
                 _log_attempt_failed(
                     logger, attempt, max_attempts, "implementation constraints failed", error_feedback
                 )
                 continue
+
+        if objective is not None:
+            existing_test_paths = _collect_existing_test_paths(objective, test_dir.parent)
+            if existing_test_paths:
+                with display_spinner_context("Running existing test regression gate..."):
+                    reg_passed, reg_output = _run_pytest_targets(
+                        workspace=test_dir.parent,
+                        targets=existing_test_paths,
+                        use_sandbox=use_sandbox,
+                    )
+                if not reg_passed:
+                    error_feedback = f"REGRESSION FAILURE: existing tests broke:\n{reg_output}"
+                    display_test_failure_output(error_feedback)
+                    _log_attempt_failed(
+                        logger, attempt, max_attempts, "regression gate failed", error_feedback
+                    )
+                    continue
 
         with display_spinner_context("Verifying tests..."):
             passed, error_feedback = _verify_tests(
@@ -1181,6 +1282,7 @@ def _run_evaluation_attempts(
                 "attempt_succeeded", success=True, attempt=attempt, max_attempts=max_attempts
             )
             return True
+        display_test_failure_output(error_feedback)
         _log_attempt_failed(logger, attempt, max_attempts, "verification failed", error_feedback)
     return False
 
@@ -1208,7 +1310,7 @@ def _build_curriculum_for_evaluation(
         return None
 
     curriculum_content = build_curriculum(
-        state, objective, constraints_map, implementation_constraints_map
+        state, objective, constraints_map, implementation_constraints_map, workspace=workspace
     )
     return write_curriculum_to_workspace(curriculum_content, workspace)
 
