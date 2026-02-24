@@ -25,7 +25,7 @@ Description: {{ task.description }}
 Signature: `{{ task.signature }}`
 {% endif %}
 {% if task.train_evals %}
-Train evals:
+Examples:
 {% for ev in task.train_evals %}
   - {{ task.name }}({{ ev.input }}) -> {{ ev.output }}
 {% endfor %}

@@ -109,7 +109,7 @@ from crucis.persistence.policy import (
     save_candidate_policy,
     save_optimizer_status,
 )
-from crucis.persistence.settings import RuntimeSettings, load_runtime_settings
+from crucis.persistence.settings import REFLECTION_LM_PREFIX_TO_ENV, RuntimeSettings, load_runtime_settings
 
 _WORKER_CMD_MARKER = "crucis.gepa_optimizer"
 
@@ -441,11 +441,7 @@ def _missing_reflection_key_message(reflection_lm: str) -> str | None:
     Returns:
         Failure message when API key is missing; otherwise None.
     """
-    prefix_to_env = {
-        "openai/": "OPENAI_API_KEY",
-        "anthropic/": "ANTHROPIC_API_KEY",
-    }
-    for prefix, env_key in prefix_to_env.items():
+    for prefix, env_key in REFLECTION_LM_PREFIX_TO_ENV.items():
         if reflection_lm.startswith(prefix) and not os.environ.get(env_key):
             return (
                 f"Missing required environment variable `{env_key}` for "
@@ -489,7 +485,7 @@ def _process_job(
     )
     if not examples:
         return _job_result(
-            job, "skipped", message="No eligible verifier examples with approved train suites."
+            job, "skipped", message="No eligible verifier examples with approved test suites."
         )
 
     train_examples, val_examples = _split_examples(
@@ -1194,7 +1190,7 @@ def _prepare_profiles_path_for_isolated_workspace(
         profiles_path: Resolved profiles path for this run.
 
     Returns:
-        Profiles path that should be passed to isolated `crucis evaluate`.
+        Profiles path that should be passed to the isolated evaluation step.
     """
     resolved_source = source_workspace.resolve()
     resolved_profiles = profiles_path.resolve()

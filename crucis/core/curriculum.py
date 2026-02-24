@@ -24,11 +24,17 @@ def _prepare_constraints_data(
     Returns:
         Dict keyed by task name with primary_dump, secondary_dump, and guidance.
     """
+    _INTERNAL_FIELDS = {"count_docstrings_in_function_lines"}
     result = {}
     for name, constraints in constraints_map.items():
+        primary = constraints.primary.model_dump(exclude_none=True)
+        secondary = {
+            k: v for k, v in constraints.secondary.model_dump(exclude_none=True).items()
+            if k not in _INTERNAL_FIELDS
+        }
         result[name] = {
-            "primary_dump": constraints.primary.model_dump(exclude_none=True),
-            "secondary_dump": constraints.secondary.model_dump(exclude_none=True),
+            "primary_dump": primary,
+            "secondary_dump": secondary,
             "guidance": constraints.guidance,
         }
     return result
@@ -38,6 +44,7 @@ def read_context_files(
     workspace: Path,
     paths: list[str],
     max_lines: int = _MAX_CONTEXT_LINES,
+    warn_missing: bool = True,
 ) -> dict[str, str]:
     """Read workspace files and return their contents keyed by relative path.
 
@@ -47,6 +54,7 @@ def read_context_files(
         workspace: Workspace root directory.
         paths: Workspace-relative file paths to read.
         max_lines: Maximum lines per file before truncation.
+        warn_missing: Whether to log a warning when a file is not found.
 
     Returns:
         Dict mapping relative path to file contents.
@@ -55,7 +63,8 @@ def read_context_files(
     for rel_path in paths:
         full = workspace / rel_path
         if not full.exists():
-            _log.warning("context file not found, skipping: %s", rel_path)
+            if warn_missing:
+                _log.warning("context file not found, skipping: %s", rel_path)
             continue
         try:
             lines = full.read_text(encoding=TEXT_ENCODING).splitlines()
@@ -92,41 +101,36 @@ def build_curriculum(
 
     completed = [p for p in state.task_progress if p.status == TrainingStatus.complete]
     task_lookup = {task.name: task for task in objective.tasks}
-    test_cd = _prepare_constraints_data(constraints_map)
     impl_cd = _prepare_constraints_data(implementation_constraints_map) if implementation_constraints_map else None
 
     context_files_content: dict[str, str] = {}
-    target_files_content: dict[str, str] = {}
     if workspace is not None:
         all_context = list(objective.context_files)
         for task in objective.tasks:
             all_context.extend(task.context_files)
         context_files_content = read_context_files(workspace, all_context)
-        target_files_content = read_context_files(workspace, objective.target_files)
 
     return render(
         "curriculum.jinja2",
         objective=objective,
         completed_tasks=completed,
         task_lookup=task_lookup,
-        test_constraints=test_cd,
         impl_constraints=impl_cd,
         context_files_content=context_files_content,
-        target_files_content=target_files_content,
     )
 
 
 def write_curriculum_to_workspace(curriculum_content: str, workspace: Path) -> Path:
-    """Write curriculum text to ``curriculum.md`` inside workspace.
+    """Write implementation brief to ``brief.md`` inside workspace.
 
     Args:
-        curriculum_content: Value for `curriculum_content` used by `write_curriculum_to_workspace`.
+        curriculum_content: Rendered brief markdown content.
         workspace: Workspace root directory.
 
     Returns:
         Resolved filesystem path for this operation.
     """
     workspace.mkdir(parents=True, exist_ok=True)
-    curriculum_path = workspace / "curriculum.md"
-    curriculum_path.write_text(curriculum_content, encoding=TEXT_ENCODING)
-    return curriculum_path
+    brief_path = workspace / "brief.md"
+    brief_path.write_text(curriculum_content, encoding=TEXT_ENCODING)
+    return brief_path

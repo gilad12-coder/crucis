@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crucis.constraints.loader import load_profiles, resolve_constraints
+from crucis.constraints.loader import extract_custom_checks, load_profiles, resolve_constraints
 from crucis.models import ParsedObjective, TaskObjective
 
 PROFILES = {
@@ -250,3 +250,74 @@ def test_resolve_constraints_unknown_profile_lists_available(tmp_path):
     assert "nonexistent" in msg
     assert "default" in msg
     assert "strict" in msg
+
+
+# ---------------------------------------------------------------------------
+# extract_custom_checks
+# ---------------------------------------------------------------------------
+
+PROFILES_WITH_CUSTOM = {
+    "profiles": {
+        "default": {
+            "primary": {"max_cyclomatic_complexity": 10},
+            "secondary": {"require_docstrings": False},
+            "custom_checks": {
+                "primary": {"no_todo": True},
+                "secondary": {"max_imports": 5},
+            },
+        },
+        "plain": {
+            "primary": {"max_cyclomatic_complexity": 10},
+        },
+    },
+}
+
+
+def _write_custom_profiles(tmp_path: Path) -> Path:
+    """Write profiles with custom_checks to a temp YAML file.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+
+    Returns:
+        Path to the written profiles file.
+    """
+    path = tmp_path / "profiles.yaml"
+    path.write_text(yaml.safe_dump(PROFILES_WITH_CUSTOM), encoding="utf-8")
+    return path
+
+
+def test_extract_custom_checks_returns_config(tmp_path):
+    """extract_custom_checks should return the custom_checks dict when present.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    profiles = load_profiles(_write_custom_profiles(tmp_path))
+    objective = ParsedObjective(
+        name="demo",
+        description="Demo",
+        tests_constraint_profile="default",
+        target_files=["src/demo.py"],
+    )
+    result = extract_custom_checks(objective, profiles)
+    assert result is not None
+    assert result["primary"]["no_todo"] is True
+    assert result["secondary"]["max_imports"] == 5
+
+
+def test_extract_custom_checks_returns_none_when_absent(tmp_path):
+    """extract_custom_checks should return None when profile has no custom_checks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    profiles = load_profiles(_write_custom_profiles(tmp_path))
+    objective = ParsedObjective(
+        name="demo",
+        description="Demo",
+        tests_constraint_profile="plain",
+        target_files=["src/demo.py"],
+    )
+    result = extract_custom_checks(objective, profiles)
+    assert result is None

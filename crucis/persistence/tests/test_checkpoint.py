@@ -60,6 +60,7 @@ def test_save_and_load_checkpoint_round_trip(tmp_path):
                     attack_vectors=["hardcode"],
                     generalization_gaps=["negative numbers"],
                     suggested_probe_tests=["test negatives"],
+                    correctness_issues=[],
                 ),
             )
         ]

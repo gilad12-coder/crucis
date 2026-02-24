@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from json_repair import repair_json
@@ -14,6 +15,8 @@ from crucis.core.prompts import build_adversary_prompt, build_probe_prompt
 from crucis.core.test_generator import extract_python_from_response
 from crucis.defaults import TEXT_ENCODING
 from crucis.models import AdversarialReport
+from crucis.persistence.audit import log_agent_call
+from crucis.persistence.events import EventLogger
 from crucis.persistence.policy import OptimizerPolicy
 
 
@@ -37,6 +40,8 @@ def run_adversarial_probe(
     objective,
     config: Config,
     policy: OptimizerPolicy | None = None,
+    logger: EventLogger | None = None,
+    agent_timeout: int | None = None,
 ) -> tuple[bool, str]:
     """Generate and execute a cheating probe implementation against tests.
 
@@ -45,16 +50,33 @@ def run_adversarial_probe(
         objective: Parsed objective data for the current run.
         config: Runtime configuration values.
         policy: Active optimizer policy used for prompt steering.
+        logger: Optional event logger for audit trail.
+        agent_timeout: Override for agent subprocess timeout in seconds.
 
     Returns:
         True when the operation succeeds; otherwise False.
     """
     prompt = build_probe_prompt(train_suite_source, objective, policy=policy)
+    timeout_kwargs = {"timeout": agent_timeout} if agent_timeout is not None else {}
+    t0 = time.monotonic()
     result = run_cli_agent(
         prompt,
         config.critic_agent,
         config.critic_model,
         config.max_budget_usd,
+        **timeout_kwargs,
+    )
+    duration = time.monotonic() - t0
+    log_agent_call(
+        logger,
+        prompt=prompt,
+        result=result,
+        agent=config.critic_agent,
+        model=config.critic_model,
+        budget=config.max_budget_usd,
+        duration_sec=duration,
+        call_site="run_adversarial_probe",
+        task=getattr(objective, "name", None),
     )
     if result.exit_code != 0:
         if is_rate_limited(result.stderr):
@@ -79,6 +101,8 @@ def run_adversarial_review(
     config: Config,
     constraints=None,
     policy: OptimizerPolicy | None = None,
+    logger: EventLogger | None = None,
+    agent_timeout: int | None = None,
 ) -> AdversarialReport:
     """Run the adversary model on approved tests and parse report output.
 
@@ -88,6 +112,8 @@ def run_adversarial_review(
         config: Runtime configuration values.
         constraints: Resolved constraints for the current task or objective.
         policy: Active optimizer policy used for prompt steering.
+        logger: Optional event logger for audit trail.
+        agent_timeout: Override for agent subprocess timeout in seconds.
 
     Returns:
         Result of running the requested operation.
@@ -98,11 +124,26 @@ def run_adversarial_review(
         constraints,
         policy=policy,
     )
+    timeout_kwargs = {"timeout": agent_timeout} if agent_timeout is not None else {}
+    t0 = time.monotonic()
     result = run_cli_agent(
         prompt,
         config.critic_agent,
         config.critic_model,
         config.max_budget_usd,
+        **timeout_kwargs,
+    )
+    duration = time.monotonic() - t0
+    log_agent_call(
+        logger,
+        prompt=prompt,
+        result=result,
+        agent=config.critic_agent,
+        model=config.critic_model,
+        budget=config.max_budget_usd,
+        duration_sec=duration,
+        call_site="run_adversarial_review",
+        task=getattr(objective, "name", None),
     )
     if result.exit_code != 0 and is_rate_limited(result.stderr):
         raise RuntimeError("Agent rate-limited by the provider.")

@@ -55,7 +55,8 @@ def test_parse_adversarial_report_json_object():
     raw = (
         '{"attack_vectors": ["hardcode output"], '
         '"generalization_gaps": ["no negative coverage"], '
-        '"suggested_probe_tests": ["add randomized input test"]}'
+        '"suggested_probe_tests": ["add randomized input test"], '
+        '"correctness_issues": []}'
     )
     report = parse_adversarial_report(raw)
     assert report.attack_vectors == ["hardcode output"]

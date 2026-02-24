@@ -1,6 +1,6 @@
-{#- Evaluation curriculum markdown artifact. -#}
+{#- Implementation brief markdown artifact. -#}
 {% from "_macros.jinja2" import constraints_dump %}
-# Evaluation Curriculum
+# Implementation Brief
 
 ## Objective: {{ objective.name }}
 
@@ -8,6 +8,8 @@
 
 {% if objective.target_files %}
 ## Target Files
+
+Read these files before implementing. Preserve existing functionality unless the objective requires changes.
 
 {% for path in objective.target_files %}
 - `{{ path }}`
@@ -27,20 +29,7 @@ These files contain existing code relevant to the objective. Understand their st
 
 {% endfor %}
 {% endif %}
-{% if target_files_content %}
-## Current Target File Contents
-
-These are the files you will modify. Preserve existing functionality unless the objective requires changes.
-
-{% for path, content in target_files_content.items() %}
-### {{ path }}
-```python
-{{ content }}
-```
-
-{% endfor %}
-{% endif %}
-## Train Suite Files
+## Test Suite Files
 
 {% for progress in completed_tasks %}
 {% if progress.train_suite_source %}
@@ -66,16 +55,10 @@ These are the files you will modify. Preserve existing functionality unless the 
 
 {% set evals = (task_obj.train_evals if task_obj else []) or objective.train_evals %}
 {% if evals %}
-**Train evals:**
+**Examples:**
 {% for eval_case in evals %}
-- `{{ progress.name }}({{ eval_case.input }})` -> `{{ eval_case.output }}`
+- `{{ progress.name }}({{ eval_case.input | unwrap_args }})` -> `{{ eval_case.output }}`
 {% endfor %}
-
-{% endif %}
-{% if test_constraints.get(progress.name) %}
-{% set tc = test_constraints[progress.name] %}
-**Test constraints:**
-{{ constraints_dump(tc.primary_dump, tc.secondary_dump, tc.guidance) }}
 
 {% endif %}
 {% if impl_constraints and impl_constraints.get(progress.name) %}
@@ -102,6 +85,12 @@ These are the files you will modify. Preserve existing functionality unless the 
 {% if report.suggested_probe_tests %}
 - suggested probe tests:
 {% for item in report.suggested_probe_tests %}
+  - {{ item }}
+{% endfor %}
+{% endif %}
+{% if report.correctness_issues %}
+- correctness issues:
+{% for item in report.correctness_issues %}
   - {{ item }}
 {% endfor %}
 {% endif %}

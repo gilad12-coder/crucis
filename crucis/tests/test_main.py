@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -10,13 +11,10 @@ import pytest
 from crucis.__main__ import (
     build_parser,
     main,
-    run_add_eval_command,
-    run_add_task_command,
     run_doctor_command,
     run_evaluate,
     run_init_command,
     run_optimizer_worker_command,
-    run_plan_command,
     run_promote,
     show_checkpoint,
 )
@@ -27,35 +25,27 @@ from crucis.persistence.policy import OptimizerStatus
 class TestBuildParser:
     """Parser shape tests for new strict command set."""
 
-    def test_fit_subcommand(self):
-        """Test fit subcommand."""
+    def test_run_subcommand_with_objective(self):
+        """Test run subcommand with objective path."""
         parser = build_parser()
-        args = parser.parse_args(["fit", "objective.yaml"])
-        assert args.command == "fit"
+        args = parser.parse_args(["run", "objective.yaml"])
+        assert args.command == "run"
         assert args.objective_path == "objective.yaml"
 
-    def test_checkpoint_subcommand(self):
-        """Test checkpoint subcommand."""
+    def test_status_subcommand(self):
+        """Test status subcommand and summary alias."""
         parser = build_parser()
-        args = parser.parse_args(["checkpoint"])
-        assert args.command == "checkpoint"
+        args = parser.parse_args(["status"])
+        assert args.command == "status"
         assert args.checkpoint == ".checkpoint.json"
         assert args.json is False
 
-    def test_evaluate_subcommand(self):
-        """Test evaluate subcommand."""
+    def test_run_dry_run_flag(self):
+        """Test run subcommand --dry-run flag."""
         parser = build_parser()
-        args = parser.parse_args(["evaluate", "--objective", "obj.yaml"])
-        assert args.command == "evaluate"
-        assert args.objective == "obj.yaml"
-
-    def test_migrate_subcommand(self):
-        """Test migrate subcommand."""
-        parser = build_parser()
-        args = parser.parse_args(
-            ["migrate", "--objective-in", "old.yaml", "--objective-out", "new.yaml"]
-        )
-        assert args.command == "migrate"
+        args = parser.parse_args(["run", "--dry-run"])
+        assert args.command == "run"
+        assert args.dry_run is True
 
     def test_promote_subcommand(self):
         """Test promote subcommand."""
@@ -88,33 +78,59 @@ class TestBuildParser:
         assert args.name == "my_project"
         assert args.no_agent is False
         assert args.require_agent is False
+        assert args.existing_codebase is False
         assert args.agent is None
 
     def test_init_subcommand_with_flags(self):
         """Test init subcommand with explicit flags."""
         parser = build_parser()
         args = parser.parse_args(
-            ["init", "--name", "foo", "--workspace", "/tmp", "--no-agent", "--require-agent"]
+            [
+                "init",
+                "--name",
+                "foo",
+                "--workspace",
+                "/tmp",
+                "--no-agent",
+                "--require-agent",
+                "--existing-codebase",
+            ]
         )
         assert args.name == "foo"
         assert args.workspace == "/tmp"
         assert args.no_agent is True
         assert args.require_agent is True
+        assert args.existing_codebase is True
 
-    def test_plan_subcommand(self):
-        """Test plan subcommand defaults."""
+    def test_run_plan_flag(self):
+        """Test run --plan flag."""
         parser = build_parser()
-        args = parser.parse_args(["plan", "objective.yaml"])
-        assert args.command == "plan"
+        args = parser.parse_args(["run", "objective.yaml", "--plan"])
+        assert args.command == "run"
+        assert args.plan is True
+        assert args.objective_path == "objective.yaml"
+
+    def test_run_force_plan_flag(self):
+        """Test run --force-plan flag."""
+        parser = build_parser()
+        args = parser.parse_args(["run", "--plan", "--force-plan"])
+        assert args.force_plan is True
+
+    def test_run_subcommand_defaults(self):
+        """Test run subcommand defaults."""
+        parser = build_parser()
+        args = parser.parse_args(["run", "objective.yaml"])
+        assert args.command == "run"
         assert args.objective_path == "objective.yaml"
         assert args.profiles == "constraints/profiles.yaml"
-        assert args.force is False
+        assert args.checkpoint == ".checkpoint.json"
 
-    def test_plan_subcommand_force(self):
-        """Test plan subcommand force flag."""
+    def test_run_subcommand_no_path(self):
+        """Test run subcommand without objective path."""
         parser = build_parser()
-        args = parser.parse_args(["plan", "objective.yaml", "--force"])
-        assert args.force is True
+        args = parser.parse_args(["run"])
+        assert args.command == "run"
+        assert args.objective_path is None
 
     def test_optimizer_worker_subcommand(self):
         """Test optimizer-worker subcommand."""
@@ -130,8 +146,8 @@ class TestMainDispatch:
 
     @patch("crucis.__main__._run_preflight_or_exit")
     @patch("crucis.__main__.run_fit")
-    def test_main_fit_calls_run_fit(self, mock_run_fit, _mock_preflight, tmp_path):
-        """Test main fit calls run fit.
+    def test_main_run_calls_run_fit(self, mock_run_fit, _mock_preflight, tmp_path):
+        """Test main run calls run_fit with auto flags.
 
         Args:
             mock_run_fit: Mock object for `run_fit` interactions.
@@ -139,26 +155,22 @@ class TestMainDispatch:
         """
         objective = tmp_path / "objective.yaml"
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
-        main(["fit", str(objective), "--checkpoint", "cp.json"])
-        mock_run_fit.assert_called_once_with(
-            objective_path=objective,
-            profiles_path=Path("constraints/profiles.yaml"),
-            checkpoint_path=Path("cp.json"),
-            auto_tests=False,
-            auto_adversary=False,
-            auto_evaluate=False,
-            workspace=None,
-        )
+        main(["run", str(objective), "--checkpoint", "cp.json"])
+        mock_run_fit.assert_called_once()
+        call_kwargs = mock_run_fit.call_args[1]
+        assert call_kwargs["auto_tests"] is True
+        assert call_kwargs["auto_adversary"] is True
+        assert call_kwargs["auto_evaluate"] is True
 
     @patch("crucis.__main__.load_runtime_settings", side_effect=ValueError("invalid settings"))
     @patch("crucis.__main__.run_fit")
-    def test_main_fit_exits_when_runtime_settings_invalid(
+    def test_main_run_exits_when_runtime_settings_invalid(
         self,
         mock_run_fit,
         _mock_load_settings,
         tmp_path,
     ):
-        """Fit should fail fast when runtime settings cannot be loaded.
+        """Run should fail fast when runtime settings cannot be loaded.
 
         Args:
             mock_run_fit: Mock object for `run_fit` interactions.
@@ -169,7 +181,7 @@ class TestMainDispatch:
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
 
         with pytest.raises(SystemExit) as exc:
-            main(["fit", str(objective)])
+            main(["run", str(objective)])
 
         assert exc.value.code == 1
         assert mock_run_fit.call_count == 0
@@ -193,46 +205,29 @@ class TestMainDispatch:
         objective = tmp_path / "objective.yaml"
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
 
-        monkeypatch.setattr(sys, "argv", ["crucis", "fit", str(objective)])
+        monkeypatch.setattr(sys, "argv", ["crucis", "run", str(objective)])
         main()
 
         mock_run_fit.assert_called_once()
 
-    @patch("crucis.__main__._run_preflight_or_exit")
-    @patch("crucis.__main__.run_evaluate")
-    def test_main_evaluate_calls_run_evaluate(self, mock_eval, _mock_preflight):
-        """Test main evaluate calls run evaluate.
-
-        Args:
-            mock_eval: Mock object for `eval` interactions.
-        """
-        main(["evaluate", "--objective", "obj.yaml", "--no-sandbox"])
-        mock_eval.assert_called_once_with(
-            objective_path=Path("obj.yaml"),
-            profiles_path=Path("constraints/profiles.yaml"),
-            checkpoint_path=Path(".checkpoint.json"),
-            use_sandbox=False,
-            workspace=None,
-        )
-
     @patch("crucis.__main__.show_checkpoint")
-    def test_main_checkpoint_calls_show(self, mock_show):
-        """Test main checkpoint calls show.
+    def test_main_status_calls_show(self, mock_show):
+        """Test main status calls show_checkpoint.
 
         Args:
             mock_show: Mock object for `show` interactions.
         """
-        main(["checkpoint", "--checkpoint", "cp.json"])
+        main(["status", "--checkpoint", "cp.json"])
         mock_show.assert_called_once_with(Path("cp.json"), as_json=False)
 
     @patch("crucis.__main__.show_checkpoint")
-    def test_main_checkpoint_json_calls_show(self, mock_show):
-        """Test main checkpoint --json calls show with JSON mode.
+    def test_main_status_json_calls_show(self, mock_show):
+        """Test main status --json calls show with JSON mode.
 
         Args:
             mock_show: Mock object for `show` interactions.
         """
-        main(["checkpoint", "--checkpoint", "cp.json", "--json"])
+        main(["status", "--checkpoint", "cp.json", "--json"])
         mock_show.assert_called_once_with(Path("cp.json"), as_json=True)
 
     @patch("crucis.__main__.run_doctor_command")
@@ -255,53 +250,6 @@ class TestMainDispatch:
         main(["optimizer-worker"])
         assert mock_worker.call_count == 1
 
-    @patch("crucis.__main__.migrate_objective_file")
-    @patch("crucis.__main__.migrate_checkpoint_file")
-    def test_main_migrate_calls_tools(self, mock_migrate_cp, mock_migrate_obj):
-        """Test main migrate calls tools.
-
-        Args:
-            mock_migrate_cp: Mock object for `migrate_cp` interactions.
-            mock_migrate_obj: Mock object for `migrate_obj` interactions.
-        """
-        main(
-            [
-                "migrate",
-                "--objective-in",
-                "old.yaml",
-                "--objective-out",
-                "new.yaml",
-                "--checkpoint-in",
-                "old.json",
-                "--checkpoint-out",
-                "new.json",
-            ]
-        )
-        mock_migrate_obj.assert_called_once_with(Path("old.yaml"), Path("new.yaml"))
-        mock_migrate_cp.assert_called_once_with(Path("old.json"), Path("new.json"))
-
-    def test_main_migrate_malformed_yaml_prints_clean_error(self, tmp_path, capsys):
-        """migrate should report parse errors without a traceback."""
-        objective_in = tmp_path / "bad.yaml"
-        objective_out = tmp_path / "objective.yaml"
-        objective_in.write_text("name: [invalid: yaml: {{", encoding="utf-8")
-
-        with pytest.raises(SystemExit) as exc:
-            main(
-                [
-                    "migrate",
-                    "--objective-in",
-                    str(objective_in),
-                    "--objective-out",
-                    str(objective_out),
-                ]
-            )
-
-        assert exc.value.code == 1
-        output = capsys.readouterr().out
-        assert "Could not parse YAML" in output
-        assert "Traceback" not in output
-
     @patch("crucis.__main__.run_init_command")
     def test_main_init_calls_run_init_command(self, mock_init):
         """Init command should dispatch to init handler.
@@ -312,17 +260,17 @@ class TestMainDispatch:
         main(["init"])
         assert mock_init.call_count == 1
 
-    @patch("crucis.__main__.run_plan_command")
-    def test_main_plan_calls_run_plan_command(self, mock_plan, tmp_path):
-        """Plan command should dispatch to plan handler.
+    @patch("crucis.__main__._handle_run_plan")
+    def test_main_run_plan_calls_handler(self, mock_plan, tmp_path):
+        """Run --plan should dispatch to plan handler.
 
         Args:
-            mock_plan: Mock object for plan command handler.
+            mock_plan: Mock object for plan handler.
             tmp_path: Temporary directory provided by pytest.
         """
         objective = tmp_path / "objective.yaml"
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
-        main(["plan", str(objective)])
+        main(["run", str(objective), "--plan"])
         assert mock_plan.call_count == 1
 
     @patch("crucis.__main__.run_promote")
@@ -335,30 +283,21 @@ class TestMainDispatch:
         main(["promote", "--run-id", "run-1"])
         mock_promote.assert_called_once()
 
-    def test_legacy_command_fails_fast(self):
-        """Test legacy command fails fast."""
-        with pytest.raises(SystemExit):
-            main(["run", "spec.yaml"])
-
-    def test_legacy_flag_fails_fast(self, tmp_path):
-        """Test legacy flag fails fast.
+    @patch("crucis.__main__._run_preflight_or_exit")
+    @patch("crucis.__main__.run_fit")
+    def test_run_auto_finds_objective_yaml(self, mock_run_fit, _mock_preflight, tmp_path, monkeypatch):
+        """Test run auto-finds objective.yaml in CWD when no path given.
 
         Args:
+            mock_run_fit: Mock object for `run_fit` interactions.
             tmp_path: Temporary directory provided by pytest.
+            monkeypatch: Pytest monkeypatch fixture.
         """
         objective = tmp_path / "objective.yaml"
         objective.write_text("name: add\ndescription: Add", encoding="utf-8")
-        with pytest.raises(SystemExit):
-            main(["fit", str(objective), "--session", "x.json"])
-
-    def test_legacy_preview_command_shows_replacement_hint(self, capsys):
-        """Legacy preview command should redirect users to fit --dry-run."""
-        with pytest.raises(SystemExit) as exc:
-            main(["preview", "objective.yaml"])
-        assert exc.value.code == 2
-        output = capsys.readouterr().out
-        assert "crucis fit <objective.yaml>" in output
-        assert "--dry-run" in output
+        monkeypatch.chdir(tmp_path)
+        main(["run", "--checkpoint", "cp.json"])
+        mock_run_fit.assert_called_once()
 
 
 @patch("crucis.__main__.load_checkpoint")
@@ -630,68 +569,19 @@ def test_run_optimizer_worker_command_json_output(mock_run_worker, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_run_add_task_invalid_name_rolls_back_file(tmp_path):
-    """add-task should not modify objective file when validation fails."""
-    objective = tmp_path / "objective.yaml"
-    original = "name: add\ndescription: Add numbers\ntrain_evals:\n  - input: \"(1, 2)\"\n    output: \"3\"\n"
-    objective.write_text(original, encoding="utf-8")
-
-    args = type(
-        "Args",
-        (),
-        {
-            "objective_path": str(objective),
-            "name": "bad-name",
-            "description": None,
-            "signature": None,
-        },
-    )()
-
-    with pytest.raises(SystemExit) as exc:
-        run_add_task_command(args)
-
-    assert exc.value.code == 1
-    assert objective.read_text(encoding="utf-8") == original
-
-
-@patch("crucis.__main__.parse_objective", side_effect=ValueError("synthetic validation failure"))
-def test_run_add_eval_validation_failure_rolls_back_file(_mock_parse, tmp_path):
-    """add-eval should not modify objective file when post-write validation fails."""
-    objective = tmp_path / "objective.yaml"
-    original = (
-        "name: add\n"
-        "description: Add numbers\n"
-        "train_evals:\n"
-        "  - input: \"(1, 2)\"\n"
-        "    output: \"3\"\n"
-    )
-    objective.write_text(original, encoding="utf-8")
-
-    args = type(
-        "Args",
-        (),
-        {
-            "objective_path": str(objective),
-            "task": None,
-            "eval_input": "(2, 3)",
-            "eval_output": "5",
-        },
-    )()
-
-    with pytest.raises(SystemExit) as exc:
-        run_add_eval_command(args)
-
-    assert exc.value.code == 1
-    assert objective.read_text(encoding="utf-8") == original
-
-
 # ---------------------------------------------------------------------------
 # init command handler tests
 # ---------------------------------------------------------------------------
 
 
+@patch("crucis.__main__.detect_existing_codebase", return_value=False)
 @patch("crucis.__main__.scaffold_workspace")
-def test_run_init_command_no_agent_scaffolds_workspace(mock_scaffold, tmp_path, capsys):
+def test_run_init_command_no_agent_scaffolds_workspace(
+    mock_scaffold,
+    _mock_detect,
+    tmp_path,
+    capsys,
+):
     """Init with --no-agent should call scaffold_workspace and report files.
 
     Args:
@@ -702,11 +592,17 @@ def test_run_init_command_no_agent_scaffolds_workspace(mock_scaffold, tmp_path, 
     created = [tmp_path / "objective.yaml", tmp_path / ".crucis" / "settings.yaml"]
     mock_scaffold.return_value = created
 
-    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": True, "name": "foo"})()
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": True, "name": "foo", "existing_codebase": False},
+    )()
     run_init_command(args)
 
-    mock_scaffold.assert_called_once_with(tmp_path.resolve(), name="foo")
-    output = capsys.readouterr().out
+    mock_scaffold.assert_called_once_with(
+        tmp_path.resolve(), name="foo", existing_codebase=False, agent=None, model=None,
+    )
+    output = capsys.readouterr().err
     assert "objective.yaml" in output
 
 
@@ -719,16 +615,21 @@ def test_run_init_command_already_initialized(_mock_scaffold, tmp_path, capsys):
         tmp_path: Temporary directory provided by pytest.
         capsys: Pytest capture fixture.
     """
-    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": True, "name": "x"})()
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": True, "name": "x", "existing_codebase": False},
+    )()
     run_init_command(args)
 
-    output = capsys.readouterr().out
+    output = capsys.readouterr().err
     assert "already initialized" in output
 
 
+@patch("crucis.__main__.detect_existing_codebase", return_value=False)
 @patch("crucis.__main__.scaffold_workspace")
 @patch("crucis.__main__._try_agent_onboarding", return_value=False)
-def test_run_init_command_agent_fallback(mock_try_agent, mock_scaffold, tmp_path):
+def test_run_init_command_agent_fallback(mock_try_agent, mock_scaffold, _mock_detect, tmp_path):
     """Init should fall back to static scaffolding when agent onboarding fails.
 
     Args:
@@ -737,7 +638,11 @@ def test_run_init_command_agent_fallback(mock_try_agent, mock_scaffold, tmp_path
         tmp_path: Temporary directory provided by pytest.
     """
     mock_scaffold.return_value = [tmp_path / "objective.yaml"]
-    args = type("Args", (), {"workspace": str(tmp_path), "no_agent": False, "name": "p"})()
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": False, "name": "p", "existing_codebase": False},
+    )()
     run_init_command(args)
 
     mock_try_agent.assert_called_once()
@@ -756,6 +661,7 @@ def test_run_init_command_rejects_no_agent_with_require_agent(mock_scaffold, tmp
             "require_agent": True,
             "name": "p",
             "agent": None,
+            "existing_codebase": False,
         },
     )()
 
@@ -784,6 +690,7 @@ def test_run_init_command_non_interactive_falls_back_to_static(
             "require_agent": False,
             "name": "p",
             "agent": "claude",
+            "existing_codebase": False,
         },
     )()
 
@@ -809,6 +716,7 @@ def test_run_init_command_require_agent_exits_in_non_interactive_shell(
             "require_agent": True,
             "name": "p",
             "agent": "claude",
+            "existing_codebase": False,
         },
     )()
 
@@ -838,6 +746,7 @@ def test_run_init_command_require_agent_exits_when_agent_missing(
             "require_agent": True,
             "name": "p",
             "agent": "claude",
+            "existing_codebase": False,
         },
     )()
 
@@ -848,38 +757,118 @@ def test_run_init_command_require_agent_exits_when_agent_missing(
     assert mock_scaffold.call_count == 0
 
 
+@patch("crucis.__main__.detect_existing_codebase", return_value=True)
+@patch("crucis.__main__.scaffold_workspace")
+def test_run_init_command_existing_codebase_auto_mode(
+    mock_scaffold,
+    _mock_detect,
+    tmp_path,
+    capsys,
+):
+    """Init should auto-switch scaffold mode when existing Python files are detected."""
+    mock_scaffold.return_value = [tmp_path / "objective.yaml"]
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": True, "name": "p", "existing_codebase": False},
+    )()
+
+    run_init_command(args)
+
+    mock_scaffold.assert_called_once_with(
+        tmp_path.resolve(), name="p", existing_codebase=True, agent=None, model=None,
+    )
+    output = capsys.readouterr().err
+    assert "Existing codebase detected" in output
+
+
+@patch("crucis.__main__.detect_existing_codebase", return_value=False)
+@patch("crucis.__main__.scaffold_workspace")
+def test_run_init_command_existing_codebase_flag_forces_mode(
+    mock_scaffold,
+    _mock_detect,
+    tmp_path,
+):
+    """--existing-codebase should force existing-repo scaffold behavior."""
+    mock_scaffold.return_value = [tmp_path / "objective.yaml"]
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": True, "name": "p", "existing_codebase": True},
+    )()
+
+    run_init_command(args)
+
+    mock_scaffold.assert_called_once_with(
+        tmp_path.resolve(), name="p", existing_codebase=True, agent=None, model=None,
+    )
+
+
+@patch("crucis.__main__.scaffold_workspace")
+@patch("crucis.__main__.detect_existing_codebase", return_value=False)
+def test_run_init_command_warns_on_unsupported_python(
+    mock_detect,
+    mock_scaffold,
+    tmp_path,
+    capsys,
+):
+    """Init should emit a clear warning on unsupported Python versions."""
+    mock_scaffold.return_value = [tmp_path / "objective.yaml"]
+    args = type(
+        "Args",
+        (),
+        {"workspace": str(tmp_path), "no_agent": True, "name": "p", "existing_codebase": False},
+    )()
+
+    with patch(
+        "crucis.__main__.sys.version_info",
+        SimpleNamespace(major=3, minor=11, micro=9),
+    ):
+        run_init_command(args)
+
+    assert mock_detect.call_count == 1
+    assert mock_scaffold.call_count == 1
+    output = capsys.readouterr().err
+    assert "supported but Python 3.12+ is recommended" in output
+
+
 # ---------------------------------------------------------------------------
-# plan command handler tests
+# run --plan handler tests
 # ---------------------------------------------------------------------------
 
 
-def test_run_plan_command_missing_objective_exits(tmp_path):
-    """Plan should exit 1 when objective file does not exist.
+def test_run_plan_missing_objective_exits(tmp_path):
+    """run --plan should exit 1 when objective file does not exist.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
     """
+    from crucis.__main__ import _handle_run_plan
+
     args = type(
         "Args",
         (),
         {
             "objective_path": str(tmp_path / "missing.yaml"),
+            "objective_flag": None,
             "profiles": "constraints/profiles.yaml",
             "workspace": str(tmp_path),
-            "force": False,
+            "force_plan": False,
         },
     )()
     with pytest.raises(SystemExit) as exc:
-        run_plan_command(args)
+        _handle_run_plan(args)
     assert exc.value.code == 1
 
 
-def test_run_plan_command_existing_plan_without_force_exits(tmp_path):
-    """Plan should exit 1 when plan.md exists and --force is not set.
+def test_run_plan_existing_plan_without_force_exits(tmp_path):
+    """run --plan should exit 1 when plan.md exists and --force-plan is not set.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
     """
+    from crucis.__main__ import _handle_run_plan
+
     objective = tmp_path / "objective.yaml"
     objective.write_text("name: add\ndescription: Add", encoding="utf-8")
     (tmp_path / "plan.md").write_text("existing plan", encoding="utf-8")
@@ -889,13 +878,14 @@ def test_run_plan_command_existing_plan_without_force_exits(tmp_path):
         (),
         {
             "objective_path": str(objective),
+            "objective_flag": None,
             "profiles": "constraints/profiles.yaml",
             "workspace": str(tmp_path),
-            "force": False,
+            "force_plan": False,
         },
     )()
     with pytest.raises(SystemExit) as exc:
-        run_plan_command(args)
+        _handle_run_plan(args)
     assert exc.value.code == 1
 
 
@@ -905,7 +895,7 @@ def test_run_plan_command_existing_plan_without_force_exits(tmp_path):
 @patch("crucis.__main__.resolve_constraints")
 @patch("crucis.__main__.parse_objective")
 @patch("crucis.__main__._ensure_runtime_settings")
-def test_run_plan_command_calls_build_generation_plan(
+def test_run_plan_calls_build_generation_plan(
     _mock_settings,
     mock_parse,
     mock_resolve,
@@ -914,7 +904,7 @@ def test_run_plan_command_calls_build_generation_plan(
     mock_write_plan,
     tmp_path,
 ):
-    """Plan should parse objective, resolve constraints, and write plan file.
+    """run --plan should parse objective, resolve constraints, and write plan file.
 
     Args:
         _mock_settings: Mock for runtime settings validation.
@@ -925,6 +915,7 @@ def test_run_plan_command_calls_build_generation_plan(
         mock_write_plan: Mock object for write_plan_to_workspace.
         tmp_path: Temporary directory provided by pytest.
     """
+    from crucis.__main__ import _handle_run_plan
     from crucis.models import ParsedObjective, TaskObjective
 
     objective = tmp_path / "objective.yaml"
@@ -944,12 +935,13 @@ def test_run_plan_command_calls_build_generation_plan(
         (),
         {
             "objective_path": str(objective),
+            "objective_flag": None,
             "profiles": str(profiles),
             "workspace": str(tmp_path),
-            "force": False,
+            "force_plan": False,
         },
     )()
-    run_plan_command(args)
+    _handle_run_plan(args)
 
     mock_build_plan.assert_called_once()
     mock_write_plan.assert_called_once()
@@ -961,7 +953,7 @@ def test_run_plan_command_calls_build_generation_plan(
 @patch("crucis.__main__.resolve_constraints")
 @patch("crucis.__main__.parse_objective")
 @patch("crucis.__main__._ensure_runtime_settings")
-def test_run_plan_command_single_objective_resolves_constraints_for_objective_name(
+def test_run_plan_single_objective_resolves_constraints_for_objective_name(
     _mock_settings,
     mock_parse,
     mock_resolve,
@@ -970,7 +962,8 @@ def test_run_plan_command_single_objective_resolves_constraints_for_objective_na
     _mock_write_plan,
     tmp_path,
 ):
-    """Plan should build constraint map from objective name when tasks are omitted."""
+    """run --plan should build constraint map from objective name when tasks are omitted."""
+    from crucis.__main__ import _handle_run_plan
     from crucis.models import ParsedObjective
 
     objective = tmp_path / "objective.yaml"
@@ -987,12 +980,13 @@ def test_run_plan_command_single_objective_resolves_constraints_for_objective_na
         (),
         {
             "objective_path": str(objective),
+            "objective_flag": None,
             "profiles": str(profiles),
             "workspace": str(tmp_path),
-            "force": False,
+            "force_plan": False,
         },
     )()
-    run_plan_command(args)
+    _handle_run_plan(args)
 
     assert mock_resolve.call_count == 1
     assert mock_resolve.call_args.args[2] == "add"

@@ -18,7 +18,7 @@ Environment variables (or `config.py` defaults):
 | `MAX_BUDGET_USD` | `5.0` | Per-agent-call cost budget cap |
 | `OPTIMIZER_EVAL_TIMEOUT_SEC` | `180` | Evaluator timeout in seconds |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (required for `claude` agent) |
-| `OPENAI_API_KEY` | — | OpenAI API key (required for `codex` agent) |
+| `OPENAI_API_KEY` | — | OpenAI API key (optional when Codex CLI login session is active) |
 
 ## Workspace Settings
 
@@ -31,7 +31,7 @@ schema_version: 1
 optimizer:
   enabled: true
   max_metric_calls: 24
-  reflection_lm: openai/gpt-5.1
+  reflection_lm: openai/gpt-5.2
   train_split_ratio: 0.7
   max_examples_per_run: 24
   evaluator_timeout_sec: 180
@@ -61,163 +61,50 @@ agents:
   max_budget_usd: null     # per-agent call budget cap (null = 5.00)
 ```
 
+## Model Defaults
+
+Each agent has a default model when `generation_model` / `critic_model` / `implementation_model` is set to `null`:
+
+| Agent | Default Model |
+|---|---|
+| `claude` | `claude-opus-4-6` |
+| `codex` | codex built-in default (leave model as `null`) |
+
+Run `crucis doctor` to detect agent/model mismatches (e.g. a Claude agent configured with a GPT model).
+
 ## Constraint Profiles
 
 Constraint profiles are loaded from `constraints/profiles.yaml` (or a custom file via `--profiles`).
-Each profile defines `primary` and `secondary` gates plus optional guidance that shape train-suite generation.
+Each profile defines `primary` and `secondary` gates plus optional guidance that shape train-suite generation. See [Constraints Reference](constraints-reference.md) for all 34 available constraints.
 
-## CLI Commands
+## Color and Output
 
-### `crucis init`
-
-```bash
-crucis init [OPTIONS]
-```
-
-Scaffold a new Crucis workspace. By default, an AI agent conducts an interactive interview about your project and generates tailored files. Use `--no-agent` to skip the interview and use static templates.
-
-| Option | Default | Description |
-|---|---|---|
-| `--name` | `my_project` | Project name; built-in templates exist for `factorial` |
-| `--workspace` | `.` | Directory to scaffold |
-| `--agent` | config default | Which agent conducts the onboarding (`claude` or `codex`) |
-| `--no-agent` | off | Skip AI interview; use static templates (for CI/automation) |
-
-Creates: `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, `src/solution.py`.
-
-### `crucis plan`
+Crucis routes all UI output (Rich-formatted messages, tables, spinners) to **stderr** and data output (JSON from `--json` flags) to **stdout**. This lets you pipe JSON output cleanly:
 
 ```bash
-crucis plan objective.yaml [OPTIONS]
+crucis status --json | jq '.task_progress'
 ```
 
-Generate a structured generation plan for the objective.
+Color is enabled by default when stderr is a TTY. Override with:
 
-| Option | Default | Description |
-|---|---|---|
-| `objective_path` | *(required)* | Path to objective YAML |
-| `--profiles` | `constraints/profiles.yaml` | Constraint profile file |
-| `--workspace` | objective parent | Workspace directory |
-| `--force` | off | Regenerate plan even if `plan.md` exists |
+- `--color` / `--no-color` flags (see [CLI Reference](cli-reference.md#global-options))
+- `NO_COLOR` environment variable (see [no-color.org](https://no-color.org/))
 
-Creates: `plan.md` in the workspace root.
+`--color` takes precedence over `NO_COLOR` when both are set.
 
-### `crucis fit`
+## MCP Server
 
-```bash
-crucis fit objective.yaml [OPTIONS]
-```
+When running Crucis as an [MCP server](mcp-server.md), these additional environment variables apply:
 
-| Option | Default | Description |
-|---|---|---|
-| `objective_path` | *(positional)* | Path to objective YAML file |
-| `--objective` | — | Alternative to positional argument |
-| `--profiles` | `constraints/profiles.yaml` | Constraint profile file |
-| `--checkpoint` | `.checkpoint.json` | Checkpoint file path |
-| `-y, --auto` | off | Auto-approve tests + adversarial review |
-| `--auto-tests` | off | Auto-approve generated train suites |
-| `--auto-adversary` | off | Auto-accept adversarial report |
-| `--evaluate` | off | Run evaluation after fit |
-| `--workspace` | objective parent | Workspace directory |
-| `--dry-run` | off | Display generation prompts without calling agents |
-| `--task` | — | Process only named task(s); repeatable |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CRUCIS_MCP_AUTHORIZED` | — | Set to `1` to authorize MCP access to the workspace |
+| `CRUCIS_WORKSPACE` | cwd | Override workspace root for the MCP server |
 
-### `crucis evaluate`
-
-```bash
-crucis evaluate objective.yaml [OPTIONS]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `objective_path` | *(positional)* | Path to objective YAML file |
-| `--objective` | — | Alternative to positional argument |
-| `--profiles` | `constraints/profiles.yaml` | Constraint profile file |
-| `--checkpoint` | `.checkpoint.json` | Checkpoint file path |
-| `--no-sandbox` | off | Run host pytest instead of Docker sandbox |
-| `--workspace` | objective parent | Workspace directory |
-
-### `crucis checkpoint`
-
-```bash
-crucis checkpoint [OPTIONS]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `--checkpoint` | `.checkpoint.json` | Checkpoint file path |
-| `--task` | — | Show test source and adversarial report for specific task |
-| `--json` | off | Print machine-readable checkpoint payload |
-
-### `crucis doctor`
-
-```bash
-crucis doctor [OPTIONS]
-```
-
-Runs diagnostics for environment prerequisites and optional workspace artifacts.
-
-Checks performed:
-
-- Python version (requires 3.12+)
-- pytest availability
-- Agent binaries on PATH (`claude`, `codex`)
-- API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
-- Agent/model coherence (warns on mismatches like claude agent with gpt model)
-- Claude Code nesting detection
-- Runtime settings validation
-- Docker sandbox availability
-
-| Option | Default | Description |
-|---|---|---|
-| `--workspace` | `.` | Workspace root |
-| `--objective` | unset | Optional objective file to validate |
-| `--profiles` | unset | Optional profiles file to validate |
-| `--checkpoint` | unset | Optional checkpoint file to validate |
-| `--require-docker` | off | Treat missing Docker as a hard failure |
-| `--json` | off | Print machine-readable diagnostics payload |
-
-### `crucis promote`
-
-```bash
-crucis promote --run-id <run_id> [--workspace .]
-```
-
-Promotes a background optimizer candidate policy from `.crucis/optimizer/runs/<run_id>/candidate_policy.yaml` into active policy.
-
-| Option | Default | Description |
-|---|---|---|
-| `--run-id` | *(required)* | Run ID of candidate to promote |
-| `--workspace` | `.` | Workspace root |
-| `--force` | off | Promote even when metadata is missing |
-
-### `crucis optimizer-worker`
-
-```bash
-crucis optimizer-worker [OPTIONS]
-```
-
-Runs optimizer worker in foreground mode for scripts/automation.
-
-| Option | Default | Description |
-|---|---|---|
-| `--workspace` | `.` | Workspace root |
-| `--loop` | off | Run continuously instead of one-shot queue drain |
-| `--json` | off | Print machine-readable worker result payload |
-
-### `crucis migrate`
-
-```bash
-crucis migrate --objective-in old.yaml --objective-out objective.yaml
-crucis migrate --checkpoint-in .session.json --checkpoint-out .checkpoint.json
-```
-
-Use migration before running strict parser/runtime on legacy files.
+Alternatively, create a `.crucis/mcp_enabled` marker file in the workspace to authorize MCP access without environment variables.
 
 ## Run Logs
 
-Long-running phases (`fit`, `evaluate`, and `optimizer-worker`) append structured JSONL events under:
+Long-running phases (`fit`, `evaluate`, and `optimizer-worker`) append structured JSONL events under `.crucis/logs/`.
 
-```
-.crucis/logs/
-```
+See [CLI Reference](cli-reference.md) for all commands and options.

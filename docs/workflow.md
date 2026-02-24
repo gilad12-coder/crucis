@@ -2,29 +2,25 @@
 
 Crucis runs a structured training loop with adversarial hardening:
 
-```d2
-direction: right
-
-objective: Objective {
-  shape: page
-}
-fit: Fit {
-  tooltip: Generate + attack tests
-}
-checkpoint: Checkpoint {
-  shape: cylinder
-}
-evaluate: Evaluate {
-  tooltip: Implement + verify
-}
-optimizer: Optimizer
-
-objective -> fit -> checkpoint -> evaluate -> optimizer
+```mermaid
+flowchart LR
+  objective["Objective"] --> fit[Fit] --> checkpoint[(Checkpoint)] --> evaluate[Evaluate] --> optimizer[Optimizer]
 ```
 
 ## Fit Phase
 
-`crucis fit` processes each task in the objective sequentially.
+```mermaid
+flowchart TD
+  gen[Generate Train Suite] --> validate{Syntax + Constraints?}
+  validate -- pass --> review[User Review]
+  validate -- fail --> gen
+  review --> adversary[Adversarial Review]
+  adversary --> probe[Cheating Probe]
+  probe -- caught --> save[Save Checkpoint]
+  probe -- passed --> gen
+```
+
+`crucis run` processes each task in the objective sequentially.
 
 ### Step 1: Generate Train Suite
 
@@ -54,7 +50,7 @@ In interactive mode, the train suite is displayed with syntax highlighting:
 - **`e` (edit)** -- open in `$EDITOR` for manual changes
 - **`r` (reject)** -- regenerate from scratch
 
-With `--auto-tests` or `-y`, this step is skipped.
+`crucis run` auto-approves by default. In interactive fit mode (advanced), prompts are Rich-styled with labeled shortcuts.
 
 ### Step 3: Adversarial Review
 
@@ -79,6 +75,17 @@ Crucis generates a deliberately cheating implementation -- one that passes all t
 
 The fit loop runs up to `max_iterations` adversarial cycles (2 in auto mode).
 
+### Resetting Checkpoint State
+
+Use `--reset` to clear the entire checkpoint before starting, or `--reset-task <name>` to clear specific tasks:
+
+```bash
+crucis run --reset
+crucis run --reset-task my_task
+```
+
+These flags are mutually exclusive. When `--reset-task` is used without `--task`, the reset tasks are automatically scoped for processing.
+
 ### Step 5: Save Checkpoint
 
 After each task, the checkpoint is saved with:
@@ -88,7 +95,20 @@ After each task, the checkpoint is saved with:
 
 ## Evaluation Phase
 
-`crucis evaluate` takes the checkpoint and generates an implementation.
+```mermaid
+flowchart TD
+  write[Write Test Files] --> curriculum[Build Curriculum]
+  curriculum --> impl[Implementation Agent]
+  impl --> regress{Existing Tests?}
+  regress -- pass --> verify{Train Suite?}
+  regress -- fail --> impl
+  verify -- pass --> holdout{Holdout Evals?}
+  verify -- fail --> impl
+  holdout -- pass --> done[Complete]
+  holdout -- fail --> impl
+```
+
+The evaluation phase takes the checkpoint and generates an implementation.
 
 ### Step 1: Write Test Files
 
@@ -142,9 +162,17 @@ Holdout failures are reported as counts only -- no payloads are leaked to preven
 
 If verification fails, the error output (trimmed to 1200 chars) is fed back to the implementation agent and the cycle retries. Up to `max_iterations` attempts.
 
-On success, a background optimizer job is queued.
+On success, `evaluation_passed: true` is persisted in the checkpoint and a background optimizer job is queued.
 
 ## Adversarial Testing
+
+```mermaid
+flowchart LR
+  gen[Generate Tests] --> critic[Critic Review]
+  critic --> probe[Cheating Probe]
+  probe -- "probe caught" --> done[Tests Hardened]
+  probe -- "probe passed" --> gen
+```
 
 The adversarial system has three components:
 
@@ -156,59 +184,25 @@ This creates an arms race: better attacks produce better tests, which produce be
 
 ## Error Recovery
 
-- **Agent timeout** -- treated as a failed attempt, retried with the next iteration
+- **Agent timeout** -- treated as a failed attempt, retried with the next iteration. Override with `--timeout SECONDS` (default: 300s)
 - **Missing agent binary** -- returns `exit_code=-1`, retried
 - **Malformed adversarial JSON** -- repaired via `json_repair` library
 - **Docker unavailable** -- falls back to host pytest
 - **Constraint violations** -- violation details fed back to generation prompt for correction
 
+Error messages include actionable hints where possible (e.g., "Hint: Check the path or run 'crucis init' to create one.").
+
 All long-running phases emit structured JSONL telemetry under `.crucis/logs/`.
 
-## Commands
+## MCP Server Mode
 
-```bash
-# Initialize a new workspace (interactive agent interview)
-crucis init --name my_function
+Everything described above is also available via the [MCP server](mcp-server.md). AI agents in Claude Code, OpenCode, or Codex can call Crucis tools directly instead of shelling out to the CLI. The MCP server supports two modes:
 
-# Initialize without agent (static templates)
-crucis init --name my_function --no-agent
+- **Pipeline mode** — the agent calls `crucis_run` and Crucis manages the full loop internally.
+- **Step-by-step mode** — the agent acts as generator/critic/implementer itself, using tools like `crucis_get_prompt`, `crucis_submit_test_suite`, and `crucis_verify_implementation`.
 
-# Generate a structured plan
-crucis plan objective.yaml
+See [MCP Server](mcp-server.md) for setup and tool reference.
 
-# Inspect generation prompts without calling agents (dry run)
-crucis fit objective.yaml --dry-run
+---
 
-# Fit (interactive)
-crucis fit objective.yaml
-
-# Fit specific tasks only
-crucis fit objective.yaml --task merge_intervals --task insert_interval
-
-# Fit (fully automatic with evaluation)
-crucis fit objective.yaml -y --evaluate
-
-# Fit (auto-approve tests, manual adversarial review)
-crucis fit objective.yaml --auto-tests
-
-# Evaluate from checkpoint
-crucis evaluate objective.yaml
-
-# Evaluate without Docker
-crucis evaluate objective.yaml --no-sandbox
-
-# Check progress
-crucis checkpoint
-
-# Check specific task details
-crucis checkpoint --task merge_intervals
-
-# Run environment diagnostics
-crucis doctor
-
-# Promote optimizer candidate
-crucis promote --run-id <run_id>
-
-# Migrate legacy files
-crucis migrate --objective-in spec.yaml --objective-out objective.yaml
-```
+See [CLI Reference](cli-reference.md) for all commands and options.

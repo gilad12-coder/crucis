@@ -6,27 +6,65 @@ from collections import Counter
 
 from radon.complexity import cc_visit
 
+from crucis.constraints.plugins import run_custom_checks
 from crucis.models import ConstraintResult, ConstraintSet, TaskConstraints
 
 
 def check_constraints(
-    source_code: str, constraints: TaskConstraints
+    source_code: str,
+    constraints: TaskConstraints,
+    custom_checks: dict | None = None,
 ) -> tuple[ConstraintResult, ConstraintResult]:
     """Check source code against primary and secondary constraints.
 
     Args:
         source_code: Python source code to analyze.
         constraints: TaskConstraints with primary and secondary gates.
+        custom_checks: Optional mapping with ``"primary"`` and/or ``"secondary"``
+            keys containing check-name-to-config-value dicts for custom plugins.
 
     Returns:
         Tuple of (primary_result, secondary_result).
     """
     primary = _evaluate(source_code, constraints.primary)
+    primary = _apply_plugins(source_code, primary, (custom_checks or {}).get("primary"))
     if not primary.passed:
         secondary = ConstraintResult(passed=True, violations=[], metrics={})
     else:
         secondary = _evaluate(source_code, constraints.secondary)
+        secondary = _apply_plugins(source_code, secondary, (custom_checks or {}).get("secondary"))
     return primary, secondary
+
+
+def _apply_plugins(
+    source_code: str,
+    result: ConstraintResult,
+    plugin_config: dict | None,
+) -> ConstraintResult:
+    """Run custom plugin checks and merge into an existing result.
+
+    Args:
+        source_code: Python source code to analyse.
+        result: Existing constraint result to extend.
+        plugin_config: Mapping of check names to config values, or None.
+
+    Returns:
+        Updated ConstraintResult with plugin violations included.
+    """
+    if not plugin_config:
+        return result
+    extra_violations: list[str] = []
+    extra_metrics: dict = {}
+    run_custom_checks(source_code, plugin_config, extra_violations, extra_metrics)
+    if not extra_violations and not extra_metrics:
+        return result
+    all_violations = list(result.violations) + extra_violations
+    all_metrics = {**result.metrics, **extra_metrics}
+    return ConstraintResult(
+        passed=len(all_violations) == 0,
+        violations=all_violations,
+        metrics=all_metrics,
+    )
 
 
 def _evaluate(source_code: str, cs: ConstraintSet) -> ConstraintResult:
@@ -136,6 +174,26 @@ def _chk_time_complexity(src: str, cs: ConstraintSet, v: list, m: dict) -> None:
         v.append(
             f"Time complexity {estimated} exceeds max {cs.max_time_complexity}"
             " — use a more efficient algorithm"
+        )
+
+
+def _chk_space_complexity(src: str, cs: ConstraintSet, v: list, m: dict) -> None:
+    """Check space complexity constraint.
+
+    Args:
+        src: Source code.
+        cs: Constraint set.
+        v: Violations list.
+        m: Metrics dict.
+    """
+    if cs.max_space_complexity is None:
+        return
+    estimated = _estimate_space_complexity(src)
+    m["space_complexity"] = estimated
+    if _complexity_rank(estimated) > _complexity_rank(cs.max_space_complexity):
+        v.append(
+            f"Space complexity {estimated} exceeds max {cs.max_space_complexity}"
+            " — reduce data structure allocations"
         )
 
 
@@ -690,6 +748,7 @@ _CHECKERS = [
     _chk_total_lines,
     _chk_docstrings,
     _chk_time_complexity,
+    _chk_space_complexity,
     _chk_parameters,
     _chk_nested_depth,
     _chk_return_statements,
@@ -907,6 +966,18 @@ _NESTING_TO_COMPLEXITY = {
     3: "O(n^3)",
 }
 
+_EXPENSIVE_METHOD_DEPTH: dict[str, int] = {
+    "sort": 1, "index": 1, "count": 1, "remove": 1,
+}
+
+_EXPENSIVE_BUILTIN_DEPTH: dict[str, int] = {
+    "sorted": 1, "sum": 1, "min": 1, "max": 1, "any": 1, "all": 1,
+}
+
+_FUNC_NODE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
+_LOOP_NODE_TYPES = (ast.For, ast.While)
+_COMP_NODE_TYPES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
 
 def _complexity_rank(complexity: str) -> int:
     """Map a complexity string to a comparable rank.
@@ -921,40 +992,243 @@ def _complexity_rank(complexity: str) -> int:
 
 
 def _estimate_time_complexity(source_code: str) -> str:
-    """Estimate time complexity from maximum loop nesting depth.
+    """Estimate time complexity from loop depth, expensive ops, and recursion.
 
     Args:
         source_code: Python source code to analyze.
 
     Returns:
-        Big-O notation string based on loop nesting.
+        Big-O notation string.
     """
     tree = ast.parse(source_code)
     max_depth = 0
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            depth = _max_loop_depth(node, 0)
-            max_depth = max(max_depth, depth)
+        if isinstance(node, _FUNC_NODE_TYPES):
+            max_depth = max(max_depth, _function_time_depth(node))
     return _NESTING_TO_COMPLEXITY.get(max_depth, f"O(n^{max_depth})")
 
 
-def _max_loop_depth(node: ast.AST, current: int) -> int:
-    """Recursively find the maximum loop nesting depth.
+def _function_time_depth(func_node: ast.AST) -> int:
+    """Compute the effective time complexity depth for a function.
+
+    Args:
+        func_node: Function definition AST node.
+
+    Returns:
+        Effective depth (0=O(1), 1=O(n), 2=O(n^2), etc).
+    """
+    func_name = getattr(func_node, "name", "")
+    depth = _max_effective_depth(func_node, 0, func_name)
+    if _detects_self_call(func_node, func_name) and depth < 1:
+        depth = 1
+    return depth
+
+
+def _max_effective_depth(node: ast.AST, loop_depth: int, func_name: str) -> int:
+    """Recursively compute effective depth considering loops, ops, and comprehensions.
 
     Args:
         node: AST node to inspect.
-        current: Current nesting depth.
+        loop_depth: Current loop nesting depth.
+        func_name: Enclosing function name for recursion skip.
 
     Returns:
-        Maximum loop nesting depth found.
+        Maximum effective depth found in this subtree.
     """
-    max_depth = current
+    best = loop_depth
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, (ast.For, ast.While)):
-            max_depth = max(max_depth, _max_loop_depth(child, current + 1))
+        if isinstance(child, _FUNC_NODE_TYPES):
+            continue
+        if isinstance(child, _LOOP_NODE_TYPES):
+            best = max(best, _max_effective_depth(child, loop_depth + 1, func_name))
+        elif isinstance(child, _COMP_NODE_TYPES):
+            comp_depth = loop_depth + len(child.generators)
+            best = max(best, _max_effective_depth(child, comp_depth, func_name))
+        elif isinstance(child, ast.Call) and loop_depth > 0:
+            best = max(best, loop_depth + _call_depth_cost(child))
+            best = max(best, _max_effective_depth(child, loop_depth, func_name))
+        elif isinstance(child, ast.Compare) and loop_depth > 0:
+            if any(isinstance(op, (ast.In, ast.NotIn)) for op in child.ops):
+                best = max(best, loop_depth + 1)
+            best = max(best, _max_effective_depth(child, loop_depth, func_name))
         else:
-            max_depth = max(max_depth, _max_loop_depth(child, current))
-    return max_depth
+            best = max(best, _max_effective_depth(child, loop_depth, func_name))
+    return best
+
+
+def _call_depth_cost(node: ast.Call) -> int:
+    """Return extra depth cost of a function/method call.
+
+    Args:
+        node: AST Call node.
+
+    Returns:
+        Additional depth (0 if the call is O(1)).
+    """
+    if isinstance(node.func, ast.Attribute):
+        return _EXPENSIVE_METHOD_DEPTH.get(node.func.attr, 0)
+    if isinstance(node.func, ast.Name):
+        return _EXPENSIVE_BUILTIN_DEPTH.get(node.func.id, 0)
+    return 0
+
+
+def _detects_self_call(func_node: ast.AST, func_name: str) -> bool:
+    """Check if a function body contains a direct recursive call.
+
+    Args:
+        func_node: Function definition AST node.
+        func_name: Name of the function to look for.
+
+    Returns:
+        True if the function calls itself.
+    """
+    if not func_name:
+        return False
+    for child in ast.walk(func_node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == func_name
+        ):
+            return True
+    return False
+
+
+_GROWING_METHODS = frozenset({"append", "extend", "add", "insert"})
+_MATERIALIZING_BUILTINS = frozenset({"list", "dict", "set", "frozenset", "tuple"})
+_COPY_METHODS = frozenset({"copy", "deepcopy"})
+
+
+def _estimate_space_complexity(source_code: str) -> str:
+    """Estimate space complexity from allocations, comprehensions, and loops.
+
+    Args:
+        source_code: Python source code to analyze.
+
+    Returns:
+        Big-O notation string.
+    """
+    tree = ast.parse(source_code)
+    max_depth = 0
+    for node in ast.walk(tree):
+        if isinstance(node, _FUNC_NODE_TYPES):
+            max_depth = max(max_depth, _function_space_depth(node))
+    return _NESTING_TO_COMPLEXITY.get(max_depth, f"O(n^{max_depth})")
+
+
+def _function_space_depth(func_node: ast.AST) -> int:
+    """Compute effective space depth for a function.
+
+    Args:
+        func_node: Function definition AST node.
+
+    Returns:
+        Space depth (0=O(1), 1=O(n), 2=O(n^2), etc).
+    """
+    best = _space_walk(func_node)
+    best = max(best, _space_from_loops(func_node, 0))
+    return best
+
+
+def _space_walk(node: ast.AST) -> int:
+    """Walk AST for space-allocating patterns, skipping into nested comps.
+
+    Args:
+        node: AST node to inspect.
+
+    Returns:
+        Maximum space depth found in the subtree.
+    """
+    best = 0
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _FUNC_NODE_TYPES):
+            continue
+        if isinstance(child, _COMP_NODE_TYPES):
+            best = max(best, _comprehension_space_depth(child))
+        elif isinstance(child, ast.Call):
+            best = max(best, _call_space_cost(child))
+            best = max(best, _space_walk(child))
+        elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Slice):
+            best = max(best, 1)
+        else:
+            best = max(best, _space_walk(child))
+    return best
+
+
+def _comprehension_space_depth(node: ast.AST) -> int:
+    """Compute space depth from a comprehension node, including nested comps.
+
+    Args:
+        node: ListComp, SetComp, DictComp, or GeneratorExp AST node.
+
+    Returns:
+        Space depth accounting for nested materializing comprehensions.
+    """
+    if isinstance(node, ast.GeneratorExp):
+        return 0
+    own = len(node.generators)
+    inner_max = 0
+    elt = getattr(node, "elt", None) or getattr(node, "value", None)
+    if elt is not None:
+        for child in ast.walk(elt):
+            if isinstance(child, _COMP_NODE_TYPES) and child is not node:
+                inner_max = max(inner_max, _comprehension_space_depth(child))
+    return own + inner_max
+
+
+def _call_space_cost(node: ast.Call) -> int:
+    """Return space cost of a single call (materialization or copy).
+
+    Args:
+        node: AST Call node.
+
+    Returns:
+        Space depth contribution (0 or 1).
+    """
+    if isinstance(node.func, ast.Name) and node.func.id in _MATERIALIZING_BUILTINS:
+        if node.args:
+            return 1
+        return 0
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _COPY_METHODS:
+        return 1
+    return 0
+
+
+def _space_from_loops(node: ast.AST, loop_depth: int) -> int:
+    """Detect growing collections inside loops for space depth.
+
+    Args:
+        node: AST node to inspect.
+        loop_depth: Current loop nesting depth.
+
+    Returns:
+        Maximum space depth from grow-in-loop patterns.
+    """
+    best = 0
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _FUNC_NODE_TYPES):
+            continue
+        if isinstance(child, _LOOP_NODE_TYPES):
+            best = max(best, _space_from_loops(child, loop_depth + 1))
+        elif isinstance(child, ast.Call) and loop_depth > 0:
+            if _is_growing_call(child):
+                best = max(best, loop_depth)
+            best = max(best, _space_from_loops(child, loop_depth))
+        else:
+            best = max(best, _space_from_loops(child, loop_depth))
+    return best
+
+
+def _is_growing_call(node: ast.Call) -> bool:
+    """Check if a Call node is a collection-growing method.
+
+    Args:
+        node: AST Call node.
+
+    Returns:
+        True if the call grows a collection (append, extend, add, insert).
+    """
+    return isinstance(node.func, ast.Attribute) and node.func.attr in _GROWING_METHODS
 
 
 def _max_parameters(source_code: str) -> tuple[int, str]:

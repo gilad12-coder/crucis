@@ -99,6 +99,7 @@ class TestAdversarialReport:
             attack_vectors=["hardcoded outputs"],
             generalization_gaps=["no large inputs"],
             suggested_probe_tests=["randomized args"],
+            correctness_issues=[],
         )
         assert report.probe_code is None
         assert report.probe_succeeded is False

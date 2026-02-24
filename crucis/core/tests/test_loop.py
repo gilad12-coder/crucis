@@ -36,6 +36,24 @@ from crucis.models import (
 from crucis.persistence.policy import OptimizerPolicy
 
 
+def _fake_proc(returncode: int, stderr_text: str = ""):
+    """Create a fake Popen process object for tests.
+
+    Args:
+        returncode: Process exit code.
+        stderr_text: Text to yield from stderr iteration.
+
+    Returns:
+        Object with stderr, returncode, and wait() matching Popen interface.
+    """
+    proc = type("FakeProc", (), {
+        "returncode": returncode,
+        "stderr": iter(stderr_text.splitlines(keepends=True)) if stderr_text else iter([]),
+        "wait": lambda self: None,
+    })()
+    return proc
+
+
 def _constraints() -> TaskConstraints:
     """constraints.
 
@@ -283,7 +301,7 @@ def test_verify_tests_task_granularity_missing_task_file_fails(tmp_path):
     )
     assert passed is False
     assert "verification unit" in feedback.lower()
-    assert "missing train suite file" in feedback.lower()
+    assert "missing test suite file" in feedback.lower()
 
 
 def test_verify_tests_task_granularity_invalid_task_name_reports_config_error(tmp_path):
@@ -385,21 +403,21 @@ def test_run_evaluation_fails_fast_on_invalid_task_name(mock_run, tmp_path):
     "crucis.core.loop.build_implementation_command",
     side_effect=lambda prompt, _a, _m: ["agent", prompt],
 )
-@patch("crucis.core.loop.subprocess.run")
+@patch("crucis.core.loop.Popen")
 def test_run_evaluation_retries_after_agent_failure(
-    mock_run, _mock_build_cmd, _mock_verify, tmp_path
+    mock_popen, _mock_build_cmd, _mock_verify, tmp_path
 ):
     """Evaluation should retry when agent command fails, then continue.
 
     Args:
-        mock_run: Mock object for `run` interactions.
+        mock_popen: Mock object for Popen interactions.
         _mock_build_cmd: Unused mock fixture placeholder for `build_cmd`.
         _mock_verify: Unused mock fixture placeholder for `verify`.
         tmp_path: Temporary directory provided by pytest.
     """
-    mock_run.side_effect = [
-        type("R", (), {"returncode": 1, "stdout": "oops", "stderr": "broken"})(),
-        type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    mock_popen.side_effect = [
+        _fake_proc(returncode=1, stderr_text="broken"),
+        _fake_proc(returncode=0),
     ]
 
     state = CheckpointState(
@@ -413,7 +431,7 @@ def test_run_evaluation_retries_after_agent_failure(
     )
     passed = run_evaluation(state, _config(), test_dir=tmp_path / "tests")
     assert passed is True
-    assert mock_run.call_count == 2
+    assert mock_popen.call_count == 2
 
 
 @patch("crucis.core.loop.prompt_adversarial_review", return_value=True)
@@ -453,6 +471,7 @@ def test_process_task_sets_complete_and_probe_fields(
         attack_vectors=["hardcoded outputs"],
         generalization_gaps=["no large numbers"],
         suggested_probe_tests=["randomized cases"],
+        correctness_issues=[],
     )
 
     progress = process_task("add", _objective(), _constraints(), _config())
@@ -487,9 +506,9 @@ def test_collect_holdout_eval_specs_only_includes_tasks_with_holdouts():
     "crucis.core.loop.build_implementation_command",
     side_effect=lambda prompt, _a, _m: ["agent", prompt],
 )
-@patch("crucis.core.loop.subprocess.run")
+@patch("crucis.core.loop.Popen")
 def test_run_evaluation_enqueues_background_job_on_completion(
-    mock_run,
+    mock_popen,
     _mock_build_cmd,
     _mock_verify,
     mock_enqueue,
@@ -498,13 +517,13 @@ def test_run_evaluation_enqueues_background_job_on_completion(
     """Successful evaluation should enqueue background optimization once.
 
     Args:
-        mock_run: Mock object for `run` interactions.
+        mock_popen: Mock object for Popen interactions.
         _mock_build_cmd: Unused mock fixture placeholder for `build_cmd`.
         _mock_verify: Unused mock fixture placeholder for `verify`.
         mock_enqueue: Mock object for `enqueue` interactions.
         tmp_path: Temporary directory provided by pytest.
     """
-    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_popen.return_value = _fake_proc(returncode=0)
     state = CheckpointState(
         task_progress=[
             TaskProgress(
@@ -702,20 +721,20 @@ def test_check_implementation_constraints_skips_missing_files(tmp_path):
     "crucis.core.loop.build_implementation_command",
     side_effect=lambda prompt, _a, _m: ["agent", prompt],
 )
-@patch("crucis.core.loop.subprocess.run")
+@patch("crucis.core.loop.Popen")
 def test_run_evaluation_retries_on_implementation_constraint_failure(
-    mock_run, _mock_build_cmd, _mock_verify, mock_check_impl, tmp_path
+    mock_popen, _mock_build_cmd, _mock_verify, mock_check_impl, tmp_path
 ):
     """Evaluation should retry when implementation constraints fail.
 
     Args:
-        mock_run: Mock object for subprocess invocation.
+        mock_popen: Mock object for Popen interactions.
         _mock_build_cmd: Unused mock fixture placeholder for build_cmd.
         _mock_verify: Unused mock fixture placeholder for verify.
         mock_check_impl: Mock for implementation constraint checking.
         tmp_path: Temporary directory provided by pytest.
     """
-    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_popen.return_value = _fake_proc(returncode=0)
     mock_check_impl.side_effect = [
         (False, "too complex"),
         (True, ""),
@@ -742,7 +761,7 @@ def test_run_evaluation_retries_on_implementation_constraint_failure(
     )
     assert passed is True
     assert mock_check_impl.call_count == 2
-    assert mock_run.call_count == 2
+    assert mock_popen.call_count == 2
 
 
 def test_read_task_context_files_aggregates_objective_and_task_level(tmp_path):
@@ -828,9 +847,9 @@ def test_collect_existing_test_paths_deduplicates(tmp_path):
     "crucis.core.loop.build_implementation_command",
     side_effect=lambda prompt, _a, _m: ["agent", prompt],
 )
-@patch("crucis.core.loop.subprocess.run")
+@patch("crucis.core.loop.Popen")
 def test_run_evaluation_regression_gate_retries_on_failure(
-    mock_run,
+    mock_popen,
     _mock_build_cmd,
     _mock_verify,
     mock_pytest,
@@ -840,14 +859,14 @@ def test_run_evaluation_regression_gate_retries_on_failure(
     """Evaluation should retry when existing tests fail as regression gate.
 
     Args:
-        mock_run: Mock for subprocess invocation.
+        mock_popen: Mock for Popen interactions.
         _mock_build_cmd: Unused mock for build_cmd.
         _mock_verify: Unused mock for verify.
         mock_pytest: Mock for _run_pytest_targets.
         mock_collect: Mock for _collect_existing_test_paths.
         tmp_path: Temporary directory provided by pytest.
     """
-    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_popen.return_value = _fake_proc(returncode=0)
     mock_collect.return_value = [tmp_path / "tests" / "test_existing.py"]
     mock_pytest.side_effect = [
         (False, "FAILED test_existing.py"),
@@ -870,7 +889,7 @@ def test_run_evaluation_regression_gate_retries_on_failure(
         objective=_objective(),
     )
     assert passed is True
-    assert mock_run.call_count == 2
+    assert mock_popen.call_count == 2
     assert mock_pytest.call_count == 2
 
 
@@ -880,9 +899,9 @@ def test_run_evaluation_regression_gate_retries_on_failure(
     "crucis.core.loop.build_implementation_command",
     side_effect=lambda prompt, _a, _m: ["agent", prompt],
 )
-@patch("crucis.core.loop.subprocess.run")
+@patch("crucis.core.loop.Popen")
 def test_run_evaluation_skips_regression_gate_when_no_existing_tests(
-    mock_run,
+    mock_popen,
     _mock_build_cmd,
     _mock_verify,
     mock_collect,
@@ -891,13 +910,13 @@ def test_run_evaluation_skips_regression_gate_when_no_existing_tests(
     """Evaluation should skip regression gate when no existing tests are configured.
 
     Args:
-        mock_run: Mock for subprocess invocation.
+        mock_popen: Mock for Popen interactions.
         _mock_build_cmd: Unused mock for build_cmd.
         _mock_verify: Unused mock for verify.
         mock_collect: Mock for _collect_existing_test_paths.
         tmp_path: Temporary directory provided by pytest.
     """
-    mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    mock_popen.return_value = _fake_proc(returncode=0)
     mock_collect.return_value = []
 
     state = CheckpointState(
@@ -916,4 +935,4 @@ def test_run_evaluation_skips_regression_gate_when_no_existing_tests(
         objective=_objective(),
     )
     assert passed is True
-    assert mock_run.call_count == 1
+    assert mock_popen.call_count == 1

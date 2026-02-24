@@ -18,7 +18,8 @@ class OptimizerRuntimeSettings(BaseModel):
 
     enabled: bool = True
     max_metric_calls: int = Field(default=24, ge=1)
-    reflection_lm: str = "openai/gpt-5.1"
+    reflection_lm: str = "openai/gpt-5.2"
+    reflection_api_key: str | None = None
     train_split_ratio: float = Field(default=0.7, gt=0.0, lt=1.0)
     max_examples_per_run: int = Field(default=24, ge=1)
     evaluator_timeout_sec: int = Field(default=180, ge=10)
@@ -28,25 +29,6 @@ class OptimizerRuntimeSettings(BaseModel):
     promotion_mode: Literal["manual", "auto"] = "manual"
     queue_max_jobs: int = Field(default=64, ge=1)
     capture_stdio: bool = True
-
-    @model_validator(mode="before")
-    @classmethod
-    def _map_legacy_auto_on_val_win(cls, value):
-        """map legacy auto on val win.
-
-        Args:
-            value: Candidate field value being validated.
-
-        Returns:
-            Result of `_map_legacy_auto_on_val_win`.
-        """
-        if not isinstance(value, dict):
-            return value
-
-        if "promotion_mode" not in value and "auto_on_val_win" in value:
-            value = dict(value)
-            value["promotion_mode"] = "auto" if bool(value.get("auto_on_val_win")) else "manual"
-        return value
 
     @model_validator(mode="after")
     def _validate_weights(self) -> OptimizerRuntimeSettings:
@@ -72,6 +54,7 @@ class AgentSettings(BaseModel):
     critic_model: str | None = None
     implementation_agent: str | None = None
     implementation_model: str | None = None
+    api_key: str | None = None
     max_iterations: int | None = None
     max_budget_usd: float | None = None
 
@@ -161,6 +144,41 @@ def load_runtime_settings(workspace: Path) -> RuntimeSettings:
     return RuntimeSettings.model_validate(raw)
 
 
+def try_load_runtime_settings(workspace: Path) -> RuntimeSettings | None:
+    """Load runtime settings without creating files if absent.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        Parsed settings, or None if file does not exist or is invalid.
+    """
+    path = settings_path(workspace)
+    if not path.exists():
+        return None
+    try:
+        raw = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING))
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return RuntimeSettings.model_validate(raw)
+    except Exception:
+        return None
+
+
+REFLECTION_LM_PREFIX_TO_ENV: dict[str, str] = {
+    "openai/": "OPENAI_API_KEY",
+    "anthropic/": "ANTHROPIC_API_KEY",
+    "gemini/": "GEMINI_API_KEY",
+    "mistral/": "MISTRAL_API_KEY",
+    "groq/": "GROQ_API_KEY",
+    "together/": "TOGETHER_API_KEY",
+}
+"""Environment variable required by each LiteLLM reflection_lm provider prefix."""
+
+
 _AGENT_MODEL_PAIRS: tuple[tuple[str, str], ...] = (
     ("generation_agent", "generation_model"),
     ("critic_agent", "critic_model"),
@@ -175,17 +193,66 @@ _AGENT_DEFAULT_MODELS: dict[str, str] = {
 """Default model for each known agent. Empty string means use agent built-in default."""
 
 
+AGENT_NAME_TO_ENV: dict[str, str] = {
+    "claude": "ANTHROPIC_API_KEY",
+    "codex": "OPENAI_API_KEY",
+}
+"""Environment variable required by each known agent binary."""
+
+
+def _apply_agent_api_key(settings: RuntimeSettings) -> None:
+    """Export agents.api_key as the env var for the configured agent.
+
+    Args:
+        settings: Loaded runtime settings.
+    """
+    key = settings.agents.api_key
+    if not key:
+        return
+    seen: set[str] = set()
+    for agent in (
+        settings.agents.generation_agent,
+        settings.agents.critic_agent,
+        settings.agents.implementation_agent,
+    ):
+        if not agent:
+            continue
+        env_key = AGENT_NAME_TO_ENV.get(agent)
+        if env_key and env_key not in seen and env_key not in os.environ:
+            os.environ[env_key] = key
+            seen.add(env_key)
+
+
+def _apply_reflection_api_key(settings: RuntimeSettings) -> None:
+    """Export reflection_api_key as the provider env var when not already set.
+
+    Args:
+        settings: Loaded runtime settings.
+    """
+    key = settings.optimizer.reflection_api_key
+    if not key:
+        return
+    for prefix, env_key in REFLECTION_LM_PREFIX_TO_ENV.items():
+        if settings.optimizer.reflection_lm.startswith(prefix):
+            if env_key not in os.environ:
+                os.environ[env_key] = key
+            return
+
+
 def apply_agent_settings_to_env(settings: RuntimeSettings) -> None:
     """Set environment variables from YAML agent settings when not already set.
 
     Only non-None fields are exported. Explicit env vars always take priority.
     When an agent is set but its corresponding model is not, the model env var
     is filled with the agent's known default to prevent cross-agent mismatches.
+    Also exports reflection_api_key when set.
 
     Args:
         settings: Loaded runtime settings containing agent overrides.
     """
-    dumped = settings.agents.model_dump()
+    _apply_reflection_api_key(settings)
+    _apply_agent_api_key(settings)
+    dumped = settings.agents.model_dump(exclude={"api_key"})
     for field_name, value in dumped.items():
         if value is None:
             continue

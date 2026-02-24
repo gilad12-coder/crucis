@@ -2,26 +2,66 @@
 
 import contextlib
 import json
+import os
 import re
 import subprocess
+import sys
 
 from pathlib import Path
 
 from crucis.cli.constants import CLI_AGENT_TIMEOUT_SEC, INTERACTIVE_AGENT_TIMEOUT_SEC
+from crucis.display import display_agent_boundary
 from crucis.models import CLIResult
 
 _AGENT_CLAUDE = "claude"
 _AGENT_CODEX = "codex"
 _MODEL_FLAG = "--model"
 _ALLOWED_TOOLS_FLAG = "--allowedTools"
+_SKIP_GIT_REPO_CHECK_FLAG = "--skip-git-repo-check"
 _RATE_LIMIT_RE = re.compile(
     r"usage limit|rate.?limit|Too Many Requests|error code:\s*429",
     re.IGNORECASE,
 )
 _NON_TRANSIENT_RE = re.compile(
-    r"not inside a trusted directory|cannot be launched inside another|CLAUDECODE",
+    r"not inside a trusted directory"
+    r"|cannot be launched inside another"
+    r"|CLAUDECODE"
+    r"|model.+is not supported"
+    r"|not supported when using Codex"
+    r"|invalid_model"
+    r"|does not exist",
     re.IGNORECASE,
 )
+_CODEX_JSON_DETAIL_RE = re.compile(r'\{"detail"\s*:\s*"([^"]+)"\}')
+_ISO_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T")
+_CODEX_NOISE_PREFIXES = (
+    "mcp:",
+    "OpenAI Codex",
+    "--------",
+    "workdir:",
+    "model:",
+    "provider:",
+    "approval:",
+    "sandbox:",
+    "reasoning",
+    "session id:",
+    "user",
+)
+
+_NESTING_ENV_VARS = ("CLAUDECODE",)
+"""Environment variables stripped from child agent processes to avoid nesting errors."""
+
+
+def _clean_agent_env() -> dict[str, str]:
+    """Build a subprocess environment with nesting-related vars removed.
+
+    Returns:
+        Copy of os.environ without nesting-problematic variables.
+    """
+    env = os.environ.copy()
+    for var in _NESTING_ENV_VARS:
+        env.pop(var, None)
+    return env
 
 
 def build_command(prompt: str, agent: str, model: str, budget: float) -> list[str]:
@@ -51,7 +91,7 @@ def build_command(prompt: str, agent: str, model: str, budget: float) -> list[st
             "",
         ]
     elif agent == _AGENT_CODEX:
-        cmd = [_AGENT_CODEX, "exec"]
+        cmd = [_AGENT_CODEX, "exec", _SKIP_GIT_REPO_CHECK_FLAG]
         if model:
             cmd.extend([_MODEL_FLAG, model])
         cmd.append(prompt)
@@ -72,7 +112,7 @@ def build_implementation_command(prompt: str, agent: str, model: str) -> list[st
         List of command arguments.
     """
     if agent == _AGENT_CODEX:
-        cmd = [_AGENT_CODEX, "exec", "--full-auto"]
+        cmd = [_AGENT_CODEX, "exec", _SKIP_GIT_REPO_CHECK_FLAG, "--full-auto"]
         if model:
             cmd.extend(["-m", model])
         cmd.append(prompt)
@@ -102,6 +142,21 @@ def is_rate_limited(stderr: str) -> bool:
     return bool(_RATE_LIMIT_RE.search(stderr))
 
 
+def extract_rate_limit_detail(stderr: str) -> str:
+    """Extract only the provider's rate-limit message from stderr.
+
+    Args:
+        stderr: Raw standard error output from the agent subprocess.
+
+    Returns:
+        The line containing the rate-limit indicator, trimmed to 200 chars.
+    """
+    for line in stderr.splitlines():
+        if _RATE_LIMIT_RE.search(line):
+            return line.strip()[:200]
+    return ""
+
+
 def is_non_transient_error(stderr: str) -> bool:
     """Check whether stderr contains an error that will never self-resolve.
 
@@ -112,6 +167,30 @@ def is_non_transient_error(stderr: str) -> bool:
         True when the output indicates a non-transient failure.
     """
     return bool(_NON_TRANSIENT_RE.search(stderr))
+
+
+def extract_concise_error(stderr: str) -> str:
+    """Extract an actionable error message from noisy agent stderr.
+
+    Args:
+        stderr: Raw standard error output from the agent subprocess.
+
+    Returns:
+        Concise error string, or the original stderr if no extraction matched.
+    """
+    match = _CODEX_JSON_DETAIL_RE.search(stderr)
+    if match:
+        return match.group(1)
+    lines = [
+        line
+        for line in stderr.splitlines()
+        if line.strip()
+        and not line.lstrip().startswith(_CODEX_NOISE_PREFIXES)
+        and not _ISO_TIMESTAMP_RE.match(line.lstrip())
+    ]
+    if lines:
+        return "\n".join(lines[-5:])
+    return stderr.strip()[-500:] if stderr.strip() else ""
 
 
 def parse_cli_output(stdout: str, stderr: str, exit_code: int) -> CLIResult:
@@ -147,6 +226,9 @@ def run_cli_agent(
 ) -> CLIResult:
     """Run a CLI agent subprocess and return the result.
 
+    Stderr streams to the terminal in real time so the user sees agent
+    progress. Stdout is captured for response parsing.
+
     Args:
         prompt: Prompt text for the agent.
         agent: Agent name (claude or codex).
@@ -159,20 +241,34 @@ def run_cli_agent(
     """
     cmd = build_command(prompt, agent, model, budget)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return CLIResult(
-            stdout="",
-            stderr=f"Agent timeout after {timeout}s",
-            exit_code=-1,
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=_clean_agent_env(),
         )
     except FileNotFoundError:
         return CLIResult(
-            stdout="",
-            stderr=f"Agent binary not found: {cmd[0]}",
-            exit_code=-1,
+            stdout="", stderr=f"Agent binary not found: {cmd[0]}", exit_code=-1,
         )
-    return parse_cli_output(result.stdout, result.stderr, result.returncode)
+
+    display_agent_boundary("agent output")
+    stderr_lines: list[str] = []
+    for line in proc.stderr:
+        sys.stderr.write(line)
+        stderr_lines.append(line)
+    display_agent_boundary("end agent output")
+
+    try:
+        stdout_text, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return CLIResult(
+            stdout="", stderr=f"Agent timeout after {timeout}s", exit_code=-1,
+        )
+
+    return parse_cli_output(
+        stdout_text or "", "".join(stderr_lines), proc.returncode,
+    )
 
 
 def build_interactive_command(
@@ -203,7 +299,7 @@ def build_interactive_command(
             allowed_tools,
         ]
     if agent == _AGENT_CODEX:
-        cmd = [_AGENT_CODEX]
+        cmd = [_AGENT_CODEX, _SKIP_GIT_REPO_CHECK_FLAG]
         if model:
             cmd.extend([_MODEL_FLAG, model])
         return cmd
@@ -217,7 +313,7 @@ def run_interactive_agent(
     cwd: Path,
     allowed_tools: str = "Write,Read,Bash,Glob,Grep",
     timeout: int = INTERACTIVE_AGENT_TIMEOUT_SEC,
-) -> int:
+) -> tuple[int, str]:
     """Run an agent interactively with terminal passthrough.
 
     Args:
@@ -229,13 +325,13 @@ def run_interactive_agent(
         timeout: Subprocess timeout in seconds.
 
     Returns:
-        Process exit code (0 for success).
+        Tuple of (exit_code, error_message). Error message is empty on success.
     """
     cmd = build_interactive_command(system_prompt, agent, model, allowed_tools)
     try:
-        result = subprocess.run(cmd, cwd=str(cwd), timeout=timeout)
+        result = subprocess.run(cmd, cwd=str(cwd), timeout=timeout, env=_clean_agent_env())
     except subprocess.TimeoutExpired:
-        return -1
+        return (-1, f"Agent timed out after {timeout}s")
     except FileNotFoundError:
-        return -1
-    return result.returncode
+        return (-1, f"Agent binary '{cmd[0]}' not found on PATH")
+    return (result.returncode, "")

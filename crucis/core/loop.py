@@ -14,6 +14,8 @@ __all__ = [
     "_format_adversarial_feedback",
     "_format_agent_failure_feedback",
     "_generate_and_approve",
+    "_is_non_retryable_feedback",
+    "_has_actionable_gaps",
     "_load_or_create_checkpoint",
     "_load_policy_or_none",
     "_log_generation_attempt",
@@ -25,6 +27,8 @@ __all__ = [
     "_redacted_holdout_failure_feedback",
     "_report_constraint_violations",
     "_resolve_probe_result",
+    "_run_preflight",
+    "PreflightError",
     "_resolve_profiles_path",
     "_run_holdout_eval_checks",
     "_run_implementation_attempt",
@@ -48,19 +52,24 @@ import ast
 import os
 import re
 import subprocess
+from subprocess import Popen
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from crucis.cli.runner import (
+    _clean_agent_env,
     build_implementation_command,
+    extract_concise_error,
+    extract_rate_limit_detail,
     is_non_transient_error,
     is_rate_limited,
     run_cli_agent,
 )
 from crucis.config import Config
 from crucis.constraints.checker import check_constraints
-from crucis.constraints.loader import load_profiles, resolve_constraints
+from crucis.constraints.loader import extract_custom_checks, load_profiles, resolve_constraints
 from crucis.core.adversary import (
     run_adversarial_probe,
     run_adversarial_review,
@@ -74,21 +83,26 @@ from crucis.core.test_generator import extract_python_from_response
 from crucis.defaults import LOG_EXCERPT_MAX_CHARS, TEXT_ENCODING
 from crucis.display import (
     display_adversarial_report,
+    display_agent_boundary,
     display_dry_run_prompt,
     display_error,
     display_evaluation_attempt,
     display_evaluation_result,
     display_fit_complete,
     display_hardening_cycle,
+    display_info,
     display_sandbox_status,
     display_spinner_context,
     display_task_header,
+    prompt_input,
     display_test_failure_output,
-    display_train_suite_source,
+    display_test_suite_source,
+    display_warning,
     display_workspace,
 )
 from crucis.execution.optimizer import enqueue_background_optimization
 from crucis.execution.sandbox import check_docker_available, run_pytest_in_docker
+from crucis.diagnostics import collect_preflight_checks
 from crucis.intake.objective import parse_objective
 from crucis.models import (
     CheckpointState,
@@ -98,10 +112,43 @@ from crucis.models import (
     TrainingStatus,
     VerificationGranularity,
 )
+from crucis.persistence.audit import log_agent_call
 from crucis.persistence.checkpoint import create_checkpoint, load_checkpoint, save_checkpoint
 from crucis.persistence.events import EventLogger
 from crucis.persistence.policy import OptimizerPolicy, load_active_policy
 
+class PreflightError(RuntimeError):
+    """Raised when preflight diagnostics detect a blocking failure."""
+
+
+def _run_preflight(workspace: Path, config: Config, phase: str) -> None:
+    """Run preflight diagnostics and abort on hard failures.
+
+    Args:
+        workspace: Workspace root directory.
+        config: Runtime configuration values.
+        phase: Phase name for error messages (fit/evaluate).
+    """
+    agents = [config.generation_agent, config.critic_agent, config.implementation_agent]
+    checks = collect_preflight_checks(
+        workspace=workspace,
+        config=config,
+        required_agents=agents,
+        require_pytest=True,
+    )
+    failures = [c for c in checks if c.status == "fail"]
+    if not failures:
+        return
+    messages = [f"  - {c.message}" for c in failures]
+    hint = failures[0].hint or ""
+    detail = "\n".join(messages)
+    raise PreflightError(
+        f"Preflight failed before {phase}:\n{detail}\n{hint}"
+    )
+
+
+_PHASE_FIT = "fit"
+_PHASE_EVALUATE = "evaluate"
 _PYTHONPATH_ENV = "PYTHONPATH"
 _SCOPE_TESTS = "tests"
 _VALID_UNIT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -190,6 +237,8 @@ def run_fit(
     workspace: Path | None = None,
     dry_run: bool = False,
     task_names: list[str] | None = None,
+    no_sandbox: bool = False,
+    agent_timeout: int | None = None,
 ) -> CheckpointState:
     """Run or resume a Crucis fit session for all unfinished tasks.
 
@@ -210,8 +259,9 @@ def run_fit(
         _display_dry_run(objective, profiles, active_policy, plan_content, task_names, workspace)
         return CheckpointState(task_progress=[])
 
+    _run_preflight(workspace, Config(), _PHASE_FIT)
     checkpoint_path, state = _load_or_create_checkpoint(workspace, checkpoint_path, objective)
-    logger = _open_run_logger(workspace, "fit")
+    logger = _open_run_logger(workspace, _PHASE_FIT)
     _emit_fit_run_started(
         logger=logger,
         objective_path=objective_path,
@@ -235,12 +285,13 @@ def run_fit(
             logger=logger,
             plan_content=plan_content,
             task_names=task_names,
+            agent_timeout=agent_timeout,
         )
         _enqueue_optimizer_job(
             workspace,
             objective,
             state,
-            trigger="fit",
+            trigger=_PHASE_FIT,
             profiles_path=prof_path,
         )
         _maybe_auto_evaluate_after_fit(
@@ -252,6 +303,8 @@ def run_fit(
             profiles=profiles,
             policy=active_policy,
             profiles_path=prof_path,
+            checkpoint_path=checkpoint_path,
+            no_sandbox=no_sandbox,
         )
         _emit_fit_run_completed(logger, state)
         return state
@@ -281,6 +334,13 @@ def _load_or_create_checkpoint(
     if state is None:
         state = create_checkpoint(objective)
         save_checkpoint(state, checkpoint_path)
+    elif state.task_progress and not any(
+        t.status != TrainingStatus.pending for t in state.task_progress
+    ):
+        display_error(
+            "Checkpoint has no completed tasks. "
+            "Re-run with --reset to start fresh."
+        )
     return checkpoint_path, state
 
 
@@ -328,10 +388,10 @@ def _display_dry_run(
     context_files_content = _read_task_context_files(objective, workspace)
     filter_set = set(task_names) if task_names else None
     tasks = objective.tasks or [objective]
-    print(f"Objective: {objective.name} ({len(tasks)} task(s))")
+    display_info(f"Objective: {objective.name} ({len(tasks)} task(s))")
     if workspace:
-        print(f"Workspace: {workspace}")
-    print(f"Agent: {config.generation_agent} / {config.generation_model or 'default'}")
+        display_info(f"Workspace: {workspace}")
+    display_info(f"Agent: {config.generation_agent} / {config.generation_model or 'default'}")
     shown = 0
     for task in tasks:
         if filter_set and task.name not in filter_set:
@@ -348,10 +408,10 @@ def _display_dry_run(
         display_dry_run_prompt(task.name, prompt)
         shown += 1
     if objective.existing_tests:
-        print(f"\nRegression gate: {len(objective.existing_tests)} existing test file(s) configured.")
+        display_info(f"\nRegression gate: {len(objective.existing_tests)} existing test file(s) configured.")
     if objective.context_files:
-        print(f"Context files: {len(objective.context_files)} file(s) will be injected into prompts.")
-    print(f"\nDry run complete ({shown} task(s)). No agents were invoked.")
+        display_info(f"Context files: {len(objective.context_files)} file(s) will be injected into prompts.")
+    display_info(f"\nDry run complete ({shown} task(s)). No agents were invoked.")
 
 
 def _emit_fit_run_started(
@@ -415,7 +475,7 @@ def _open_run_logger(workspace: Path, phase: str) -> EventLogger:
     """
     logger = EventLogger(workspace, phase)
     if logger.path is not None:
-        print(f"Run log: {logger.path}")
+        display_info(f"Run log: {logger.path}")
     return logger
 
 
@@ -433,6 +493,7 @@ def _run_fit_tasks(
     logger: EventLogger,
     plan_content: str = "",
     task_names: list[str] | None = None,
+    agent_timeout: int | None = None,
 ) -> None:
     """Process all unfinished fit tasks and persist progress.
 
@@ -452,6 +513,7 @@ def _run_fit_tasks(
         task_names: Optional list of task names to process; None means all.
     """
     display_workspace(workspace)
+    t0 = time.monotonic()
     filter_set = set(task_names) if task_names else None
     total = len(state.task_progress)
     for index, progress in enumerate(state.task_progress):
@@ -473,8 +535,9 @@ def _run_fit_tasks(
             logger=logger,
             plan_content=plan_content,
             workspace=workspace,
+            agent_timeout=agent_timeout,
         )
-    display_fit_complete(state, objective_path=str(objective_path))
+    display_fit_complete(state, elapsed_sec=time.monotonic() - t0)
 
 
 def _process_fit_task(
@@ -491,6 +554,7 @@ def _process_fit_task(
     logger: EventLogger,
     plan_content: str = "",
     workspace: Path | None = None,
+    agent_timeout: int | None = None,
 ) -> None:
     """Run one fit task iteration and persist the checkpoint.
 
@@ -508,10 +572,12 @@ def _process_fit_task(
         logger: Run event logger.
         plan_content: Optional structured plan to guide generation.
         workspace: Workspace root for reading context files.
+        agent_timeout: Override for agent subprocess timeout in seconds.
     """
     progress = state.task_progress[index]
     logger.emit("task_started", task=progress.name, attempt=index + 1, max_attempts=total)
     constraints = resolve_constraints(objective, profiles, progress.name)
+    custom_checks = extract_custom_checks(objective, profiles, progress.name)
     display_task_header(progress.name, index=index + 1, total=total)
     try:
         updated = process_task(
@@ -525,6 +591,8 @@ def _process_fit_task(
             logger=logger,
             plan_content=plan_content,
             workspace=workspace,
+            custom_checks=custom_checks,
+            agent_timeout=agent_timeout,
         )
     except Exception as exc:
         logger.emit("task_failed", task=progress.name, success=False, message=str(exc))
@@ -576,6 +644,8 @@ def process_task(
     logger: EventLogger | None = None,
     plan_content: str = "",
     workspace: Path | None = None,
+    custom_checks: dict | None = None,
+    agent_timeout: int | None = None,
 ) -> TaskProgress:
     """Generate and review train suites for one task, then adversarially probe.
 
@@ -590,6 +660,8 @@ def process_task(
         logger: Optional event logger for structured telemetry.
         plan_content: Optional structured plan to guide generation.
         workspace: Workspace root for reading context files.
+        custom_checks: Optional plugin check config for primary/secondary gates.
+        agent_timeout: Override for agent subprocess timeout in seconds.
 
     Returns:
         Task progress for the processed task.
@@ -613,15 +685,19 @@ def process_task(
             logger=logger,
             plan_content=plan_content,
             context_files_content=context_files_content,
+            custom_checks=custom_checks,
+            agent_timeout=agent_timeout,
         )
         with display_spinner_context("Running adversarial review..."):
             report = run_adversarial_review(
                 approved_source, task_objective, config,
-                constraints=constraints, policy=policy,
+                constraints=constraints, policy=policy, logger=logger,
+                agent_timeout=agent_timeout,
             )
         with display_spinner_context("Running adversarial probe..."):
             probe_succeeded, probe_code = run_adversarial_probe(
-                approved_source, task_objective, config, policy=policy,
+                approved_source, task_objective, config, policy=policy, logger=logger,
+                agent_timeout=agent_timeout,
             )
         probe_succeeded = _resolve_probe_result(probe_succeeded, probe_code, task_objective)
         report.probe_succeeded = probe_succeeded
@@ -655,6 +731,8 @@ def _maybe_auto_evaluate_after_fit(
     profiles: dict,
     policy: OptimizerPolicy | None,
     profiles_path: Path,
+    checkpoint_path: Path,
+    no_sandbox: bool = False,
 ) -> None:
     """Run optional post-fit evaluation flow.
 
@@ -667,11 +745,13 @@ def _maybe_auto_evaluate_after_fit(
         profiles: Loaded constraints profile mapping.
         policy: Active optimizer policy used for prompt steering.
         profiles_path: Resolved profiles path used for this run.
+        checkpoint_path: Path to the checkpoint file for persisting results.
+        no_sandbox: When True, skip Docker sandbox and run pytest on host.
     """
     if not auto_evaluate:
         return
 
-    use_sandbox = check_docker_available()
+    use_sandbox = False if no_sandbox else check_docker_available()
     display_sandbox_status(use_sandbox)
     constraints_map = {
         progress.name: resolve_constraints(objective, profiles, progress.name, scope=_SCOPE_TESTS)
@@ -680,6 +760,11 @@ def _maybe_auto_evaluate_after_fit(
     implementation_constraints_map = {
         progress.name: resolve_constraints(objective, profiles, progress.name, scope="implementation")
         for progress in state.task_progress
+    }
+    impl_custom_checks_map = {
+        progress.name: cc
+        for progress in state.task_progress
+        if (cc := extract_custom_checks(objective, profiles, progress.name, scope="implementation"))
     }
     passed = run_evaluation(
         state,
@@ -691,8 +776,11 @@ def _maybe_auto_evaluate_after_fit(
         use_sandbox=use_sandbox,
         policy=policy,
         profiles_path=profiles_path,
+        custom_checks_map=impl_custom_checks_map or None,
     )
-    display_evaluation_result(passed)
+    if passed:
+        state.evaluation_passed = True
+        save_checkpoint(state, checkpoint_path)
 
 
 def _log_generation_attempt(
@@ -752,7 +840,7 @@ def _report_constraint_violations(
     msg = f"Attempt {attempt}/{max_attempts}: {vc} violation(s)"
     if prev_count:
         msg += f" (was {prev_count})"
-    display_error(f"{msg}. Retrying...\n{violations}")
+    display_warning(f"{msg}. Retrying...\n{violations}")
     _log_generation_attempt(
         logger,
         task_name,
@@ -773,6 +861,7 @@ def _validate_generation_attempt(
     task_name: str,
     prev_violation_count: int,
     constraint_feedback: str,
+    custom_checks: dict | None = None,
 ) -> tuple[bool, str, int]:
     """Validate syntax and constraints for a single generation attempt.
 
@@ -785,19 +874,21 @@ def _validate_generation_attempt(
         task_name: Name of the current task.
         prev_violation_count: Number of violations from the prior attempt.
         constraint_feedback: Constraint feedback carried from prior attempt.
+        custom_checks: Optional plugin check config for primary/secondary gates.
 
     Returns:
         Tuple of (passed, updated_constraint_feedback, updated_violation_count).
     """
     syntax_ok, syntax_errors = validate_train_suite_syntax(train_suite_source)
     if not syntax_ok:
-        display_error(f"Attempt {n}/{max_attempts}: syntax errors. Retrying...\n{syntax_errors}")
+        display_warning(f"Attempt {n}/{max_attempts}: syntax errors. Retrying...\n{syntax_errors}")
         _log_generation_attempt(logger, task_name, n, max_attempts, "syntax_error")
         return False, constraint_feedback, prev_violation_count
 
     constraints_ok, violations = validate_train_suite_constraints(
         train_suite_source,
         constraints,
+        custom_checks=custom_checks,
     )
     if not constraints_ok:
         new_count = _report_constraint_violations(
@@ -824,6 +915,8 @@ def _generate_and_approve(
     logger: EventLogger | None = None,
     plan_content: str = "",
     context_files_content: dict[str, str] | None = None,
+    custom_checks: dict | None = None,
+    agent_timeout: int | None = None,
 ) -> str:
     """Run generate -> validate -> review loop until train suite is approved.
 
@@ -838,6 +931,8 @@ def _generate_and_approve(
         logger: Optional event logger for structured telemetry.
         plan_content: Optional structured plan to guide generation.
         context_files_content: Existing file contents keyed by relative path.
+        custom_checks: Optional plugin check config for primary/secondary gates.
+        agent_timeout: Override for agent subprocess timeout in seconds.
 
     Returns:
         Approved train-suite source code.
@@ -858,9 +953,10 @@ def _generate_and_approve(
             max_attempts=max_attempts,
             plan_content=plan_content,
             context_files_content=context_files_content,
+            logger=logger,
+            agent_timeout=agent_timeout,
         )
         if not train_suite_source:
-            display_error(f"Attempt {n}/{max_attempts}: agent returned no output. Retrying...")
             _log_generation_attempt(logger, task_name, n, max_attempts, "no_output")
             continue
 
@@ -873,6 +969,7 @@ def _generate_and_approve(
             task_name,
             prev_violation_count,
             constraint_feedback,
+            custom_checks=custom_checks,
         )
         if not passed:
             continue
@@ -883,7 +980,7 @@ def _generate_and_approve(
             return selected_source
 
     raise RuntimeError(
-        f"Exceeded max_iterations={config.max_iterations} for train-suite generation"
+        f"Exceeded max_iterations={config.max_iterations} for test-suite generation"
     )
 
 
@@ -898,6 +995,8 @@ def generate_tests(
     max_attempts: int = 1,
     plan_content: str = "",
     context_files_content: dict[str, str] | None = None,
+    logger: EventLogger | None = None,
+    agent_timeout: int | None = None,
 ) -> str:
     """Generate pytest train-suite source for a parsed objective.
 
@@ -912,6 +1011,8 @@ def generate_tests(
         max_attempts: Maximum number of generation attempts.
         plan_content: Optional structured plan to guide generation.
         context_files_content: Existing file contents keyed by relative path.
+        logger: Optional event logger for audit trail.
+        agent_timeout: Override for agent subprocess timeout in seconds.
 
     Returns:
         Computed text result for this operation.
@@ -925,21 +1026,40 @@ def generate_tests(
         plan_content=plan_content,
         context_files_content=context_files_content,
     )
-    spinner_msg = f"Generating train suite (attempt {attempt}/{max_attempts})..."
+    timeout_kwargs = {"timeout": agent_timeout} if agent_timeout is not None else {}
+    spinner_msg = f"Generating test suite (attempt {attempt}/{max_attempts})..."
     with display_spinner_context(spinner_msg):
+        t0 = time.monotonic()
         result = run_cli_agent(
             prompt,
             config.generation_agent,
             config.generation_model,
             config.max_budget_usd,
+            **timeout_kwargs,
         )
+        duration = time.monotonic() - t0
+    log_agent_call(
+        logger,
+        prompt=prompt,
+        result=result,
+        agent=config.generation_agent,
+        model=config.generation_model,
+        budget=config.max_budget_usd,
+        duration_sec=duration,
+        call_site="generate_tests",
+        task=objective.name,
+        attempt=attempt,
+        max_attempts=max_attempts,
+    )
 
     if result.exit_code != 0:
         if is_rate_limited(result.stderr):
-            raise RuntimeError("Agent rate-limited by the provider.")
+            detail = extract_rate_limit_detail(result.stderr)
+            raise RuntimeError(f"Agent rate-limited by the provider. {detail}")
+        concise = extract_concise_error(result.stderr)
         if is_non_transient_error(result.stderr):
-            raise RuntimeError(f"Non-transient agent error: {result.stderr.strip()}")
-        display_error(f"Generation failed: {result.stderr}")
+            raise RuntimeError(f"Non-transient agent error: {concise}")
+        display_error(f"Generation failed: {concise}")
         return ""
 
     return extract_python_from_response(result.stdout)
@@ -955,12 +1075,12 @@ def prompt_user_review(train_suite_source: str, auto: bool = False) -> tuple[boo
     Returns:
         True when the operation succeeds; otherwise False.
     """
-    display_train_suite_source(train_suite_source)
+    display_test_suite_source(train_suite_source)
     if auto:
         return True, train_suite_source
 
     while True:
-        decision = input("Review: [a]pprove / [e]dit / [r]egenerate: ").strip().lower()
+        decision = prompt_input("[bold cyan]Review:[/bold cyan] [a]pprove / [e]dit / [r]egenerate: ").lower()
         if decision in {"a", "approve"}:
             return True, train_suite_source
         if decision in {"r", "regenerate"}:
@@ -969,9 +1089,27 @@ def prompt_user_review(train_suite_source: str, auto: bool = False) -> tuple[boo
             edited = _open_in_editor(train_suite_source)
             if edited is not None:
                 train_suite_source = edited
-                display_train_suite_source(train_suite_source)
+                display_test_suite_source(train_suite_source)
             continue
-        print("Enter 'a', 'e', or 'r'.")
+        display_warning("Enter 'a', 'e', or 'r'.")
+
+
+def _has_actionable_gaps(report) -> bool:
+    """Check whether the adversarial report identifies gaps worth addressing.
+
+    Args:
+        report: Adversarial report payload for the current task.
+
+    Returns:
+        True if the report contains generalization gaps or suggested probes.
+    """
+    if getattr(report, "correctness_issues", None):
+        return True
+    if getattr(report, "probe_succeeded", False):
+        return True
+    if getattr(report, "generalization_gaps", None):
+        return True
+    return bool(getattr(report, "suggested_probe_tests", None))
 
 
 def prompt_adversarial_review(report, auto: bool = False) -> bool:
@@ -982,19 +1120,19 @@ def prompt_adversarial_review(report, auto: bool = False) -> bool:
         auto: Whether to auto-approve interactive review steps.
 
     Returns:
-        True when the operation succeeds; otherwise False.
+        True to accept tests as-is, False to regenerate with feedback.
     """
     display_adversarial_report(report)
     if auto:
-        return not getattr(report, "probe_succeeded", False)
+        return not _has_actionable_gaps(report)
 
     while True:
-        decision = input("Adversary: [i]mprove tests / [d]one: ").strip().lower()
+        decision = prompt_input("[bold magenta]Adversary:[/bold magenta] [i]mprove tests / [d]one: ").lower()
         if decision in {"d", "done"}:
             return True
         if decision in {"i", "improve"}:
             return False
-        print("Enter 'i' or 'd'.")
+        display_warning("Enter 'i' or 'd'.")
 
 
 def _open_in_editor(source: str) -> str | None:
@@ -1047,20 +1185,30 @@ def validate_train_suite_syntax(train_suite_source: str) -> tuple[bool, str]:
 def validate_train_suite_constraints(
     train_suite_source: str,
     constraints: TaskConstraints,
+    custom_checks: dict | None = None,
 ) -> tuple[bool, str]:
     """Check generated train suite against resolved constraints.
+
+    Only primary violations block generation. Secondary violations are
+    logged as warnings but do not trigger retries.
 
     Args:
         train_suite_source: Generated pytest train-suite source code.
         constraints: Resolved constraints for the current task or objective.
+        custom_checks: Optional plugin check config for primary/secondary gates.
 
     Returns:
-        True when the operation succeeds; otherwise False.
+        Tuple of (passed, violation_text). Passed is False only when
+        primary constraints fail.
     """
-    primary, secondary = check_constraints(train_suite_source, constraints)
-    violations = primary.violations + secondary.violations
-    if violations:
-        return False, "\n".join(violations)
+    primary, secondary = check_constraints(train_suite_source, constraints, custom_checks)
+    if secondary.violations:
+        display_warning(
+            f"{len(secondary.violations)} secondary constraint note(s) (non-blocking):\n"
+            + "\n".join(secondary.violations)
+        )
+    if primary.violations:
+        return False, "\n".join(primary.violations)
     return True, ""
 
 
@@ -1074,6 +1222,7 @@ def run_evaluation(
     use_sandbox: bool = False,
     policy: OptimizerPolicy | None = None,
     profiles_path: Path | None = None,
+    custom_checks_map: dict[str, dict] | None = None,
 ) -> bool:
     """Run evaluation-agent generation with retries and optional sandboxed pytest.
 
@@ -1084,7 +1233,8 @@ def run_evaluation(
         True when verification succeeds within retry budget, else False.
     """
     workspace = test_dir.parent
-    logger = _open_run_logger(workspace, "evaluate")
+    _run_preflight(workspace, config, _PHASE_EVALUATE)
+    logger = _open_run_logger(workspace, _PHASE_EVALUATE)
     logger.emit(
         "run_started",
         details={
@@ -1093,6 +1243,7 @@ def run_evaluation(
             "has_objective": objective is not None,
         },
     )
+    eval_t0 = time.monotonic()
     try:
         test_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -1109,7 +1260,8 @@ def run_evaluation(
             implementation_constraints_map=implementation_constraints_map,
             workspace=workspace,
         )
-        passed = _run_evaluation_attempts(
+        max_attempts = max(config.max_iterations, 1)
+        passed, success_attempt = _run_evaluation_attempts(
             state=state,
             config=config,
             test_dir=test_dir,
@@ -1120,12 +1272,25 @@ def run_evaluation(
             generated_paths=generated_paths,
             curriculum_path=curriculum_path,
             logger=logger,
+            custom_checks_map=custom_checks_map,
         )
         _enqueue_evaluation_optimizer_job(
             workspace=workspace,
             objective=objective,
             state=state,
             profiles_path=profiles_path,
+        )
+        complete_tasks = sum(
+            1 for p in state.task_progress if p.status == TrainingStatus.complete
+        ) if passed else None
+        total_tasks = len(state.task_progress) if passed else None
+        display_evaluation_result(
+            passed,
+            attempt=success_attempt if passed else None,
+            max_attempts=max_attempts if passed else None,
+            complete_tasks=complete_tasks,
+            total_tasks=total_tasks,
+            elapsed_sec=time.monotonic() - eval_t0,
         )
         logger.emit("run_completed", success=passed)
         return passed
@@ -1158,12 +1323,14 @@ def _log_attempt_failed(
 def _check_implementation_constraints(
     workspace: Path,
     implementation_constraints_map: dict[str, TaskConstraints],
+    custom_checks_map: dict[str, dict] | None = None,
 ) -> tuple[bool, str]:
     """Check implementation source files against resolved constraints.
 
     Args:
         workspace: Workspace root directory containing implementation files.
         implementation_constraints_map: Implementation constraints keyed by task name.
+        custom_checks_map: Optional plugin configs keyed by task name.
 
     Returns:
         Tuple of (passed, violation_feedback).
@@ -1178,13 +1345,45 @@ def _check_implementation_constraints(
         if not source_parts:
             continue
         combined_source = "\n".join(source_parts)
-        primary, secondary = check_constraints(combined_source, constraints)
+        task_custom = (custom_checks_map or {}).get(task_name)
+        primary, secondary = check_constraints(combined_source, constraints, task_custom)
         violations = primary.violations + secondary.violations
         if violations:
             all_violations.append(f"[{task_name}] Implementation constraint violations:")
             all_violations.extend(f"  - {v}" for v in violations)
     if all_violations:
         return False, "\n".join(all_violations)
+    return True, ""
+
+
+def _run_regression_gate(
+    objective: ParsedObjective | None,
+    test_dir: Path,
+    use_sandbox: bool,
+) -> tuple[bool, str]:
+    """Run existing-test regression gate if applicable.
+
+    Args:
+        objective: Parsed objective data for the current run.
+        test_dir: Directory containing generated train-suite tests.
+        use_sandbox: Whether verification runs inside the Docker sandbox.
+
+    Returns:
+        Tuple of (passed, error_feedback).
+    """
+    if objective is None:
+        return True, ""
+    existing_test_paths = _collect_existing_test_paths(objective, test_dir.parent)
+    if not existing_test_paths:
+        return True, ""
+    with display_spinner_context("Running existing test regression gate..."):
+        reg_passed, reg_output = _run_pytest_targets(
+            workspace=test_dir.parent,
+            targets=existing_test_paths,
+            use_sandbox=use_sandbox,
+        )
+    if not reg_passed:
+        return False, f"REGRESSION FAILURE: existing tests broke:\n{reg_output}"
     return True, ""
 
 
@@ -1199,7 +1398,8 @@ def _run_evaluation_attempts(
     generated_paths: list[Path],
     curriculum_path: Path | None,
     logger: EventLogger,
-) -> bool:
+    custom_checks_map: dict[str, dict] | None = None,
+) -> tuple[bool, int]:
     """Execute implementation/evaluation retry attempts.
 
     Args:
@@ -1213,9 +1413,11 @@ def _run_evaluation_attempts(
         generated_paths: Written train-suite test file paths.
         curriculum_path: Optional curriculum artifact path.
         logger: Run event logger.
+        custom_checks_map: Optional plugin configs keyed by task name.
 
     Returns:
-        True when verification succeeds within retry budget.
+        Tuple of (passed, attempt). attempt is the 1-based attempt number
+        that succeeded, or 0 if all attempts failed.
     """
     max_attempts = max(config.max_iterations, 1)
     error_feedback = ""
@@ -1231,19 +1433,22 @@ def _run_evaluation_attempts(
         command = build_implementation_command(
             prompt, config.implementation_agent, config.implementation_model,
         )
-        impl_msg = f"Running implementation agent (attempt {attempt}/{max_attempts})..."
-        with display_spinner_context(impl_msg):
-            command_ok, error_feedback = _run_implementation_attempt(command)
+        command_ok, error_feedback = _run_implementation_attempt(command)
         if not command_ok:
             _log_attempt_failed(
                 logger, attempt, max_attempts, "implementation agent failed", error_feedback
             )
+            if _is_non_retryable_feedback(error_feedback):
+                display_error(extract_concise_error(error_feedback))
+                break
+            display_error(extract_concise_error(error_feedback))
             continue
 
         if implementation_constraints_map:
             impl_ok, impl_feedback = _check_implementation_constraints(
                 workspace=test_dir.parent,
                 implementation_constraints_map=implementation_constraints_map,
+                custom_checks_map=custom_checks_map,
             )
             if not impl_ok:
                 error_feedback = impl_feedback
@@ -1253,22 +1458,16 @@ def _run_evaluation_attempts(
                 )
                 continue
 
-        if objective is not None:
-            existing_test_paths = _collect_existing_test_paths(objective, test_dir.parent)
-            if existing_test_paths:
-                with display_spinner_context("Running existing test regression gate..."):
-                    reg_passed, reg_output = _run_pytest_targets(
-                        workspace=test_dir.parent,
-                        targets=existing_test_paths,
-                        use_sandbox=use_sandbox,
-                    )
-                if not reg_passed:
-                    error_feedback = f"REGRESSION FAILURE: existing tests broke:\n{reg_output}"
-                    display_test_failure_output(error_feedback)
-                    _log_attempt_failed(
-                        logger, attempt, max_attempts, "regression gate failed", error_feedback
-                    )
-                    continue
+        reg_ok, reg_feedback = _run_regression_gate(
+            objective, test_dir, use_sandbox,
+        )
+        if not reg_ok:
+            error_feedback = reg_feedback
+            display_test_failure_output(error_feedback)
+            _log_attempt_failed(
+                logger, attempt, max_attempts, "regression gate failed", error_feedback
+            )
+            continue
 
         with display_spinner_context("Verifying tests..."):
             passed, error_feedback = _verify_tests(
@@ -1281,10 +1480,10 @@ def _run_evaluation_attempts(
             logger.emit(
                 "attempt_succeeded", success=True, attempt=attempt, max_attempts=max_attempts
             )
-            return True
+            return True, attempt
         display_test_failure_output(error_feedback)
         _log_attempt_failed(logger, attempt, max_attempts, "verification failed", error_feedback)
-    return False
+    return False, 0
 
 
 def _build_curriculum_for_evaluation(
@@ -1315,8 +1514,23 @@ def _build_curriculum_for_evaluation(
     return write_curriculum_to_workspace(curriculum_content, workspace)
 
 
+def _is_non_retryable_feedback(feedback: str) -> bool:
+    """Check if implementation failure feedback indicates a non-retryable error.
+
+    Args:
+        feedback: Error feedback from a failed implementation attempt.
+
+    Returns:
+        True if the error will recur on retry (rate limit, quota, nesting, etc).
+    """
+    return is_rate_limited(feedback) or is_non_transient_error(feedback)
+
+
 def _run_implementation_attempt(command: list[str]) -> tuple[bool, str]:
     """Run one implementation-agent command and return retry feedback on failure.
+
+    Both stdout and stderr stream to the terminal in real time. Stderr is
+    also captured for error detection and retry feedback.
 
     Args:
         command: Fully built implementation-agent command.
@@ -1325,7 +1539,13 @@ def _run_implementation_attempt(command: list[str]) -> tuple[bool, str]:
         Tuple of success flag and error feedback text.
     """
     try:
-        result = subprocess.run(command, capture_output=True, text=True)
+        proc = Popen(
+            command,
+            stdout=None,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_clean_agent_env(),
+        )
     except FileNotFoundError as exc:
         return (
             False,
@@ -1336,13 +1556,21 @@ def _run_implementation_attempt(command: list[str]) -> tuple[bool, str]:
             ),
         )
 
-    if result.returncode != 0:
+    display_agent_boundary("agent output")
+    stderr_lines: list[str] = []
+    for line in proc.stderr:
+        sys.stderr.write(line)
+        stderr_lines.append(line)
+    display_agent_boundary("end agent output")
+    proc.wait()
+
+    if proc.returncode != 0:
         return (
             False,
             _format_agent_failure_feedback(
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
+                returncode=proc.returncode,
+                stdout="",
+                stderr="".join(stderr_lines),
             ),
         )
     return True, ""
@@ -1368,7 +1596,7 @@ def _enqueue_evaluation_optimizer_job(
         workspace,
         objective,
         state,
-        trigger="evaluate",
+        trigger=_PHASE_EVALUATE,
         profiles_path=profiles_path,
     )
 
@@ -1460,7 +1688,7 @@ def _verify_task_granularity(
             return (
                 False,
                 f"Verification unit `{task_name}` failed: "
-                f"missing train suite file `{public_target}`.",
+                f"missing test suite file `{public_target}`.",
             )
 
         public_passed, public_output = _run_pytest_targets(
@@ -1472,7 +1700,7 @@ def _verify_task_granularity(
             return (
                 False,
                 f"Verification unit `{task_name}` failed public "
-                f"train-suite checks:\n{public_output}",
+                f"test-suite checks:\n{public_output}",
             )
 
         task_objective = _objective_for_task(objective, task_name)
@@ -1860,11 +2088,17 @@ def _format_adversarial_feedback(report) -> str:
         Computed text result for this operation.
     """
     parts = []
+    if report.correctness_issues:
+        parts.append("CORRECTNESS ISSUES (fix these first — test assertions with wrong expected values):")
+        parts.extend(f"  - {item}" for item in report.correctness_issues[:5])
     if report.generalization_gaps:
-        parts.append("Generalization gaps to add (pick the most important):")
+        parts.append("Generalization gaps to address:")
         parts.extend(f"  - {item}" for item in report.generalization_gaps[:5])
+    if report.suggested_probe_tests:
+        parts.append("Suggested tests to add:")
+        parts.extend(f"  - {item}" for item in report.suggested_probe_tests[:5])
     if report.probe_succeeded:
-        parts.append("Warning: a cheating probe implementation passed your train suite.")
+        parts.append("Warning: a cheating probe implementation passed your test suite.")
         parts.append("Add tests with dynamic/random inputs to prevent hardcoding.")
     return "\n".join(parts)
 

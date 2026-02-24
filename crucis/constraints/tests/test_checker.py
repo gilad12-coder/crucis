@@ -93,6 +93,101 @@ def cubic(items):
                 print(i, j, k)
 """
 
+SORT_IN_LOOP = """\
+def find_sorted(items):
+    for group in items:
+        group.sort()
+"""
+
+SORTED_IN_LOOP = """\
+def find_sorted(items):
+    for group in items:
+        s = sorted(group)
+"""
+
+INDEX_IN_LOOP = """\
+def find_index(items, targets):
+    for t in targets:
+        items.index(t)
+"""
+
+IN_LIST_IN_LOOP = """\
+def has_item(items, targets):
+    for t in targets:
+        if t in items:
+            pass
+"""
+
+LIST_COMPREHENSION = """\
+def make_list(items):
+    return [x * 2 for x in items]
+"""
+
+NESTED_COMPREHENSION = """\
+def make_grid(rows, cols):
+    return [[r * c for c in cols] for r in rows]
+"""
+
+RECURSIVE_FUNCTION = """\
+def factorial(n):
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+"""
+
+SUM_IN_LOOP = """\
+def total_sums(groups):
+    for g in groups:
+        sum(g)
+"""
+
+SORT_OUTSIDE_LOOP = """\
+def sort_once(items):
+    items.sort()
+"""
+
+APPEND_IN_LOOP = """\
+def collect(items):
+    result = []
+    for x in items:
+        result.append(x)
+    return result
+"""
+
+APPEND_IN_NESTED_LOOPS = """\
+def collect_nested(grid):
+    result = []
+    for row in grid:
+        for cell in row:
+            result.append(cell)
+    return result
+"""
+
+LIST_MATERIALIZATION = """\
+def to_list(items):
+    return list(items)
+"""
+
+SLICE_COPY = """\
+def halve(items):
+    return items[:len(items) // 2]
+"""
+
+COPY_CALL = """\
+def clone(items):
+    return items.copy()
+"""
+
+GENERATOR_EXPRESSION = """\
+def lazy_sum(items):
+    return sum(x * 2 for x in items)
+"""
+
+SPACE_O1 = """\
+def add(a, b):
+    return a + b
+"""
+
 MANY_PARAMS_FUNCTION = """\
 def many(a, b, c, d, e, f):
     return a + b + c + d + e + f
@@ -1299,3 +1394,156 @@ class TestCheckConstraintsTwoGate:
         primary_result, secondary_result = check_constraints(SIMPLE_FUNCTION, constraints)
         assert primary_result.passed is True
         assert secondary_result.passed is True
+
+
+# --- Enhanced time complexity tests ---
+
+
+class TestEnhancedTimeComplexity:
+    """Tests for enhanced time complexity detection."""
+
+    def _time(self, src: str) -> str:
+        """Helper to extract time complexity metric."""
+        constraints = TaskConstraints(
+            primary=ConstraintSet(max_time_complexity="O(n^3)"),
+            secondary=ConstraintSet(),
+            target_files=[],
+        )
+        result, _ = check_constraints(src, constraints)
+        return result.metrics["time_complexity"]
+
+    def test_sort_in_loop_is_on2(self):
+        """Test that .sort() inside a loop is detected as O(n^2)."""
+        assert self._time(SORT_IN_LOOP) == "O(n^2)"
+
+    def test_sorted_in_loop_is_on2(self):
+        """Test that sorted() inside a loop is detected as O(n^2)."""
+        assert self._time(SORTED_IN_LOOP) == "O(n^2)"
+
+    def test_index_in_loop_is_on2(self):
+        """Test that .index() inside a loop is detected as O(n^2)."""
+        assert self._time(INDEX_IN_LOOP) == "O(n^2)"
+
+    def test_in_list_in_loop_is_on2(self):
+        """Test that 'x in list' inside a loop is detected as O(n^2)."""
+        assert self._time(IN_LIST_IN_LOOP) == "O(n^2)"
+
+    def test_list_comprehension_is_on(self):
+        """Test that a list comprehension is O(n)."""
+        assert self._time(LIST_COMPREHENSION) == "O(n)"
+
+    def test_nested_comprehension_is_on2(self):
+        """Test that a nested comprehension is O(n^2)."""
+        assert self._time(NESTED_COMPREHENSION) == "O(n^2)"
+
+    def test_recursive_function_is_on(self):
+        """Test that a directly recursive function is at least O(n)."""
+        assert self._time(RECURSIVE_FUNCTION) == "O(n)"
+
+    def test_sum_in_loop_is_on2(self):
+        """Test that sum() inside a loop is detected as O(n^2)."""
+        assert self._time(SUM_IN_LOOP) == "O(n^2)"
+
+    def test_sort_outside_loop_is_on(self):
+        """Test that .sort() outside a loop is O(n), not O(n^2)."""
+        assert self._time(SORT_OUTSIDE_LOOP) == "O(1)"
+
+    def test_existing_o1_unchanged(self):
+        """Test that O(1) function still detected correctly."""
+        assert self._time(O1_FUNCTION) == "O(1)"
+
+    def test_existing_on_unchanged(self):
+        """Test that O(n) function still detected correctly."""
+        assert self._time(ON_FUNCTION) == "O(n)"
+
+    def test_existing_on2_unchanged(self):
+        """Test that O(n^2) nested loop still detected correctly."""
+        assert self._time(ON2_FUNCTION) == "O(n^2)"
+
+    def test_existing_on3_unchanged(self):
+        """Test that O(n^3) triple nested loop still detected correctly."""
+        assert self._time(ON3_FUNCTION) == "O(n^3)"
+
+    def test_sort_in_loop_fails_on_constraint(self):
+        """Test that .sort() in loop fails an O(n) constraint."""
+        constraints = TaskConstraints(
+            primary=ConstraintSet(max_time_complexity="O(n)"),
+            secondary=ConstraintSet(),
+            target_files=[],
+        )
+        result, _ = check_constraints(SORT_IN_LOOP, constraints)
+        assert result.passed is False
+
+
+# --- Space complexity tests ---
+
+
+class TestSpaceComplexity:
+    """Tests for space complexity detection."""
+
+    def _space(self, src: str) -> str:
+        """Helper to extract space complexity metric."""
+        constraints = TaskConstraints(
+            primary=ConstraintSet(max_space_complexity="O(n^3)"),
+            secondary=ConstraintSet(),
+            target_files=[],
+        )
+        result, _ = check_constraints(src, constraints)
+        return result.metrics["space_complexity"]
+
+    def test_no_allocation_is_o1(self):
+        """Test that a function with no allocations is O(1)."""
+        assert self._space(SPACE_O1) == "O(1)"
+
+    def test_list_comprehension_is_on(self):
+        """Test that a list comprehension allocates O(n)."""
+        assert self._space(LIST_COMPREHENSION) == "O(n)"
+
+    def test_append_in_loop_is_on(self):
+        """Test that .append() in a loop is O(n)."""
+        assert self._space(APPEND_IN_LOOP) == "O(n)"
+
+    def test_append_in_nested_loops_is_on2(self):
+        """Test that .append() in nested loops is O(n^2)."""
+        assert self._space(APPEND_IN_NESTED_LOOPS) == "O(n^2)"
+
+    def test_nested_comprehension_is_on2(self):
+        """Test that nested comprehension is O(n^2)."""
+        assert self._space(NESTED_COMPREHENSION) == "O(n^2)"
+
+    def test_list_materialization_is_on(self):
+        """Test that list(iterable) is O(n)."""
+        assert self._space(LIST_MATERIALIZATION) == "O(n)"
+
+    def test_slice_is_on(self):
+        """Test that a slice creates O(n) space."""
+        assert self._space(SLICE_COPY) == "O(n)"
+
+    def test_copy_is_on(self):
+        """Test that .copy() creates O(n) space."""
+        assert self._space(COPY_CALL) == "O(n)"
+
+    def test_generator_expression_is_o1(self):
+        """Test that generator expression is O(1) (lazy)."""
+        assert self._space(GENERATOR_EXPRESSION) == "O(1)"
+
+    def test_space_fails_constraint(self):
+        """Test that O(n) space fails an O(1) constraint."""
+        constraints = TaskConstraints(
+            primary=ConstraintSet(max_space_complexity="O(1)"),
+            secondary=ConstraintSet(),
+            target_files=[],
+        )
+        result, _ = check_constraints(LIST_COMPREHENSION, constraints)
+        assert result.passed is False
+        assert any("space complexity" in v.lower() for v in result.violations)
+
+    def test_space_passes_constraint(self):
+        """Test that O(1) space passes an O(n) constraint."""
+        constraints = TaskConstraints(
+            primary=ConstraintSet(max_space_complexity="O(n)"),
+            secondary=ConstraintSet(),
+            target_files=[],
+        )
+        result, _ = check_constraints(SPACE_O1, constraints)
+        assert result.passed is True

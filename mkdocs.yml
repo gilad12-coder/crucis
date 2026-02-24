@@ -42,15 +42,24 @@ extra_css:
   - assets/stylesheets/stripe.css
 
 nav:
-  - Overview: index.md
-  - Tutorial: tutorial.md
-  - Objective Format: spec-format.md
+  - Home: index.md
+  - Start Here: start-here.md
+  - Quickstarts:
+    - New Project: quickstart-new-project.md
+    - Existing Codebase: quickstart-existing-codebase.md
+  - Why Crucis: why-crucis.md
+  - Use Cases: use-cases.md
   - How It Works: workflow.md
-  - Constraints: constraints.md
-  - Architecture: architecture.md
+  - Reference:
+    - CLI Commands: cli-reference.md
+    - MCP Server: mcp-server.md
+    - Objective Format: objective-reference.md
+    - Constraints: constraints-reference.md
   - Configuration: configuration.md
+  - Architecture: architecture.md
   - Background Optimizer: optimizer.md
   - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
   - Glossary: glossary.md
 
 markdown_extensions:
@@ -64,7 +73,11 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true

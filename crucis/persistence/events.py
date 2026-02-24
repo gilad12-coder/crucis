@@ -25,6 +25,30 @@ def logs_dir(workspace: Path) -> Path:
     return crucis_dir(workspace) / "logs"
 
 
+_MAX_LOGS_PER_PHASE = 20
+
+
+def _cleanup_old_logs(directory: Path, phase: str, keep: int = _MAX_LOGS_PER_PHASE) -> None:
+    """Remove old log files exceeding retention limit for a phase.
+
+    Args:
+        directory: Logs directory to clean.
+        phase: Phase prefix to match (e.g. "fit", "evaluate").
+        keep: Maximum number of log files to retain per phase.
+    """
+    try:
+        logs = sorted(
+            directory.glob(f"{phase}_*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for stale in logs[keep:]:
+        with contextlib.suppress(OSError):
+            stale.unlink()
+
+
 class EventLogger:
     """Append-only JSONL logger with failure-safe writes."""
 
@@ -50,6 +74,7 @@ class EventLogger:
             filename = f"{self.phase}_{timestamp}_{os.getpid()}.jsonl"
             self.path = directory / filename
             self._handle = self.path.open("a", encoding=TEXT_ENCODING)
+            _cleanup_old_logs(directory, self.phase)
         except OSError:
             self.path = None
             self._handle = None

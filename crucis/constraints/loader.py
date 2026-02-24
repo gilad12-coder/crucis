@@ -9,6 +9,8 @@ from crucis.models import ConstraintSet, ParsedObjective, TaskConstraints
 
 _TASKS_KEY = "tasks"
 _GUIDANCE_KEY = "guidance"
+_CUSTOM_CHECKS_KEY = "custom_checks"
+_SCOPE_TESTS = "tests"
 
 
 def load_profiles(profiles_path: Path) -> dict:
@@ -32,15 +34,45 @@ def load_profiles(profiles_path: Path) -> dict:
         raise ValueError("Profiles file is empty")
 
     profiles = dict(data.get("profiles", {}))
-    profiles[_TASKS_KEY] = data.get(_TASKS_KEY, data.get("functions", {}))
+    profiles[_TASKS_KEY] = data.get(_TASKS_KEY, {})
     return profiles
+
+
+def extract_custom_checks(
+    objective: ParsedObjective,
+    profiles: dict,
+    task_name: str | None = None,
+    scope: str = _SCOPE_TESTS,
+) -> dict | None:
+    """Extract the ``custom_checks`` section for the resolved profile.
+
+    Uses the same profile-name resolution as :func:`resolve_constraints`.
+
+    Args:
+        objective: Parsed objective data for the current run.
+        profiles: Loaded profiles dictionary (from :func:`load_profiles`).
+        task_name: Task name within the objective.
+        scope: Constraint scope — ``"tests"`` or ``"implementation"``.
+
+    Returns:
+        Dict with ``"primary"`` and/or ``"secondary"`` sub-dicts, or *None*
+        when the profile has no ``custom_checks`` section.
+    """
+    profile_name = _select_profile_name(objective, task_name, scope)
+    profile_data = profiles.get(profile_name)
+    if profile_data is None:
+        return None
+    custom = profile_data.get(_CUSTOM_CHECKS_KEY)
+    if not custom:
+        return None
+    return dict(custom)
 
 
 def resolve_constraints(
     objective: ParsedObjective,
     profiles: dict,
     task_name: str | None = None,
-    scope: str = "tests",
+    scope: str = _SCOPE_TESTS,
 ) -> TaskConstraints:
     """Resolve constraints from objective + profile config.
 
@@ -79,7 +111,7 @@ def resolve_constraints(
 def _select_profile_name(
     objective: ParsedObjective,
     task_name: str | None,
-    scope: str = "tests",
+    scope: str = _SCOPE_TESTS,
 ) -> str:
     """Select the profile name for the given scope.
 

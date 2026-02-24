@@ -82,25 +82,3 @@ def test_load_runtime_settings_rejects_invalid_weights(tmp_path: Path):
         load_runtime_settings(tmp_path)
 
 
-def test_load_runtime_settings_maps_legacy_auto_on_val_win(tmp_path: Path):
-    """Legacy auto_on_val_win should map to promotion_mode when mode is absent.
-
-    Args:
-        tmp_path: Temporary directory provided by pytest.
-    """
-    path = settings_path(tmp_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "optimizer": {
-                    "auto_on_val_win": True,
-                }
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    settings = load_runtime_settings(tmp_path)
-    assert settings.optimizer.promotion_mode == "auto"

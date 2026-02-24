@@ -8,7 +8,9 @@ import pytest
 
 from crucis.cli.runner import (
     build_command,
+    build_interactive_command,
     build_implementation_command,
+    extract_rate_limit_detail,
     parse_cli_output,
     run_cli_agent,
 )
@@ -44,6 +46,7 @@ class TestBuildCommand:
             budget=5.0,
         )
         assert "codex" in cmd[0]
+        assert "--skip-git-repo-check" in cmd
         assert "--model" in cmd
 
     def test_build_command_includes_budget(self):
@@ -77,6 +80,7 @@ class TestBuildImplementationCommand:
         )
         assert "codex" in cmd[0]
         assert "exec" in cmd
+        assert "--skip-git-repo-check" in cmd
         assert "--full-auto" in cmd
         assert "Make all tests pass" in cmd
 
@@ -129,32 +133,64 @@ class TestParseCliOutput:
         assert result.stdout == stdout
 
 
+class TestExtractRateLimitDetail:
+    """Tests for extract_rate_limit_detail."""
+
+    def test_extracts_rate_limit_line(self):
+        """Test extraction of the rate-limit line from noisy stderr."""
+        stderr = "mcp: connected\nERROR: You've hit your usage limit.\nsome prompt text"
+        assert "usage limit" in extract_rate_limit_detail(stderr)
+
+    def test_ignores_non_rate_limit_content(self):
+        """Test that non-rate-limit stderr returns empty string."""
+        assert extract_rate_limit_detail("just some error text") == ""
+
+    def test_empty_stderr(self):
+        """Test empty stderr returns empty string."""
+        assert extract_rate_limit_detail("") == ""
+
+
+def test_build_interactive_command_codex_skips_git_repo_check():
+    """Interactive codex command should bypass trusted-repo checks in temp dirs."""
+    cmd = build_interactive_command(
+        system_prompt="Prompt",
+        agent="codex",
+        model="gpt-5.3-codex",
+    )
+    assert cmd[0] == "codex"
+    assert "--skip-git-repo-check" in cmd
+
+
 # --- Error handling ---
 
 
 class TestRunCliAgentErrorHandling:
     """Tests for run_cli_agent error handling."""
 
-    @patch("crucis.cli.runner.subprocess.run")
-    def test_run_cli_agent_timeout_returns_error_result(self, mock_run):
+    @patch("crucis.cli.runner.subprocess.Popen")
+    def test_run_cli_agent_timeout_returns_error_result(self, mock_popen):
         """Test that run_cli_agent returns an error result on timeout.
 
         Args:
-            mock_run: Mocked subprocess.run.
+            mock_popen: Mocked subprocess.Popen.
         """
-        mock_run.side_effect = sp.TimeoutExpired(cmd=["claude"], timeout=300)
+        proc = mock_popen.return_value
+        proc.stderr = iter([])
+        proc.communicate.side_effect = sp.TimeoutExpired(cmd=["claude"], timeout=300)
+        proc.kill.return_value = None
+        proc.wait.return_value = None
         result = run_cli_agent(prompt="test", agent="claude", model="sonnet", budget=1.0)
         assert result.exit_code == -1
         assert "timeout" in result.stderr.lower()
 
-    @patch("crucis.cli.runner.subprocess.run")
-    def test_run_cli_agent_missing_binary_returns_error_result(self, mock_run):
+    @patch("crucis.cli.runner.subprocess.Popen")
+    def test_run_cli_agent_missing_binary_returns_error_result(self, mock_popen):
         """Test that run_cli_agent returns an error result when binary is missing.
 
         Args:
-            mock_run: Mocked subprocess.run.
+            mock_popen: Mocked subprocess.Popen.
         """
-        mock_run.side_effect = FileNotFoundError("No such file")
+        mock_popen.side_effect = FileNotFoundError("No such file")
         result = run_cli_agent(prompt="test", agent="claude", model="sonnet", budget=1.0)
         assert result.exit_code == -1
         assert "not found" in result.stderr.lower()

@@ -3,7 +3,7 @@ name = "crucis"
 version = "0.1.0"
 description = "Crucis objective-driven code training and evaluation"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "gepa>=0.1.0",
     "jinja2>=3.0",
@@ -14,10 +14,12 @@ dependencies = [
     "pyyaml>=6.0",
     "radon>=6.0",
     "rich>=13.0",
+    "mcp>=1.2.0",
 ]
 
 [project.scripts]
 crucis = "crucis.__main__:main"
+crucis-mcp = "crucis.mcp.server:main"
 
 [dependency-groups]
 dev = [
@@ -42,7 +44,7 @@ packages = ["crucis"]
 
 [tool.ruff]
 line-length = 99
-target-version = "py312"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PLR2004"]
@@ -53,7 +55,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PLR2004"]
 
 [tool.pyink]
 line-length = 99
-target-version = ["py312"]
+target-version = ["py310"]
 pyink-indentation = 4
 pyink-use-majority-quotes = true
 

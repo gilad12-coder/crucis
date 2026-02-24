@@ -14,7 +14,25 @@ If you're starting fresh, initialize a workspace first:
 crucis init --name my_function
 ```
 
-By default, an AI agent interviews you about your project. Use `--no-agent` for static templates. Either way, this creates `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`, and `src/solution.py`. Edit `objective.yaml` to describe your function, then run `crucis fit objective.yaml`.
+By default, an AI agent interviews you about your project. Use `--no-agent` for static templates. In non-interactive shells, Crucis falls back to static templates unless `--require-agent` is set. `init` requires Python 3.10+ (3.12+ recommended). Crucis always creates `objective.yaml`, `constraints/profiles.yaml`, and `.crucis/settings.yaml`; it creates `src/solution.py` only for starter/new-project scaffolds. Existing codebases are auto-detected from existing Python files (or forced via `--existing-codebase`), and in that mode objective `target_files` are left empty for you to fill.
+
+### `python -m crucis` fails with module not found
+
+```
+No module named crucis
+```
+
+This happens when running from source without installing Crucis into the active environment. Use one of:
+
+```bash
+# from repo root
+./crucis-dev <command>
+
+# from any directory
+/absolute/path/to/crucis/crucis-dev <command>
+```
+
+Or install Crucis (`uv pip install -e .` or `pip install -e .` for development) and use `crucis <command>`.
 
 ### API key not set
 
@@ -29,12 +47,18 @@ export ANTHROPIC_API_KEY=sk-ant-...   # for claude agent
 export OPENAI_API_KEY=sk-...          # for codex agent
 ```
 
+For Codex, `codex login` also satisfies authentication checks even when `OPENAI_API_KEY` is unset.
+
 Alternatively, configure a different agent in `.crucis/settings.yaml`:
 
 ```yaml
 agents:
   generation_agent: codex
 ```
+
+## Agent Output
+
+All agent calls stream stderr to the terminal in real time so you can see progress as it happens. Stdout is captured for response parsing. This applies to every phase: generation, adversarial review, planning, validation, and evaluation.
 
 ## Agent Errors
 
@@ -68,7 +92,13 @@ Error: Agent timed out after 300s
 
 The default agent timeout is 300 seconds. If your objective is complex or the model is slow, the agent may time out. Crucis treats this as a failed attempt and retries.
 
-To reduce timeouts:
+To increase the timeout, pass `--timeout` to the run command:
+
+```bash
+crucis run --timeout 600   # 10 minutes
+```
+
+Other options to reduce timeouts:
 - Simplify the objective (fewer train evals, simpler constraints)
 - Use a faster model via config
 - Reduce `max_budget_usd` to limit agent thinking time
@@ -85,7 +115,7 @@ The adversary agent should return JSON with keys `attack_vectors`, `generalizati
 Sandbox: Docker unavailable, falling back to host pytest
 ```
 
-When running `crucis evaluate`, Crucis checks for Docker availability via `docker info`. If Docker is not installed or the daemon is not running, Crucis falls back to running pytest directly on the host.
+When running `crucis run`, Crucis checks for Docker availability via `docker info`. If Docker is not installed or the daemon is not running, Crucis falls back to running pytest directly on the host.
 
 To use the Docker sandbox:
 1. Install Docker
@@ -94,7 +124,7 @@ To use the Docker sandbox:
 
 To explicitly skip Docker:
 ```bash
-crucis evaluate --objective objective.yaml --no-sandbox
+crucis run --no-sandbox
 ```
 
 ### Host pytest missing
@@ -104,7 +134,7 @@ When Docker is unavailable (or `--no-sandbox` is used), Crucis runs host verific
 Fix by installing pytest into the active environment:
 
 ```bash
-pip install pytest
+uv pip install pytest   # or: pip install pytest
 ```
 
 ### Docker timeout
@@ -144,6 +174,19 @@ Then reference in your objective:
 tests_constraint_profile: my_profile
 ```
 
+### Implementation constraints apply to entire target files
+
+When using `implementation_constraint_profile: recommended` with an existing codebase, constraints are checked against the **entire** target file — not just the new code Crucis generates. Pre-existing functions that exceed complexity or line-count limits will cause every implementation attempt to fail.
+
+For existing codebases, use a relaxed profile for implementation constraints:
+
+```yaml
+tests_constraint_profile: recommended
+implementation_constraint_profile: default
+```
+
+The `crucis init --existing-codebase` scaffold sets this automatically.
+
 ## Checkpoint Issues
 
 ### Checkpoint file not found
@@ -152,10 +195,10 @@ tests_constraint_profile: my_profile
 Error: Checkpoint file not found: .checkpoint.json
 ```
 
-The checkpoint is created automatically during `crucis fit`. If you're running `crucis evaluate` without a prior fit, ensure the checkpoint exists. You can specify a custom path:
+The checkpoint is created automatically during `crucis run`. If the checkpoint is missing, run the pipeline first. You can specify a custom path:
 
 ```bash
-crucis evaluate --objective objective.yaml --checkpoint path/to/checkpoint.json
+crucis run --checkpoint path/to/checkpoint.json
 ```
 
 ### Resuming after interruption
@@ -163,56 +206,60 @@ crucis evaluate --objective objective.yaml --checkpoint path/to/checkpoint.json
 Crucis saves the checkpoint after each task completes. If you interrupt a fit run, simply re-run the same command -- it resumes from the last completed task:
 
 ```bash
-crucis fit objective.yaml  # interrupted after task 2 of 4
-crucis fit objective.yaml  # resumes at task 3
+crucis run  # interrupted after task 2 of 4
+crucis run  # resumes at task 3
 ```
 
 ### Resetting checkpoint state
 
-To start fresh, delete the checkpoint file:
+Use the built-in reset flags instead of manually deleting files:
 
 ```bash
-rm .checkpoint.json
-crucis fit objective.yaml
+# Reset everything (prompts for confirmation)
+crucis run --reset
+
+# Skip the confirmation prompt
+crucis run --reset -y
+
+# Reset only specific tasks
+crucis run --reset-task my_task
 ```
 
-## Migration Issues
+`--reset` and `--reset-task` are mutually exclusive. When `--reset-task` is used without `--task`, the reset tasks are automatically scoped for processing.
 
-### Legacy key rejection
+
+### Codex requires trusted git directory
 
 ```
-Error: Legacy key 'examples' found. Use 'train_evals' instead.
+Error: codex requires a trusted git directory
 ```
 
-If your objective uses old schema keys, run the migration tool:
+Codex requires a git repository. If you just ran `crucis init`, initialize git first:
 
 ```bash
-crucis migrate --objective-in spec.yaml --objective-out objective.yaml
+git init && git add -A && git commit -m "init"
 ```
 
-Legacy key mappings:
+Crucis prints a hint about this after `crucis init` when no `.git` directory exists.
 
-| Old Key | New Key |
-|---------|---------|
-| `examples` | `train_evals` |
-| `public_evals` | `train_evals` |
-| `hidden_evals` | `holdout_evals` |
-| `functions` | `tasks` |
+### Model not supported
 
-### Legacy checkpoint migration
-
-```bash
-crucis migrate --checkpoint-in .session.json --checkpoint-out .checkpoint.json
+```
+Error: model "gpt-xxx" is not supported by agent "claude"
 ```
 
-Status mappings:
+The configured model doesn't match the configured agent. Check `.crucis/settings.yaml`:
 
-| Old Status | New Status |
-|------------|------------|
-| `tests_generated` | `train_suite_generated` |
-| `tests_approved` | `train_suite_approved` |
-| `critiqued` | `adversarially_reviewed` |
-| `done` | `complete` |
+```yaml
+agents:
+  generation_agent: claude
+  generation_model: claude-opus-4-6   # must be a Claude model
+```
+
+Run `crucis doctor` to detect agent/model mismatches. Model defaults per agent:
+
+- `claude` → `claude-opus-4-6`
+- `codex` → uses codex built-in default (set model to `null`)
 
 ## Optimizer Issues
 
@@ -220,7 +267,7 @@ Status mappings:
 
 Check optimizer status:
 ```bash
-crucis checkpoint
+crucis status
 ```
 
 If the optimizer shows `idle` and never runs:
@@ -244,4 +291,4 @@ If a candidate is ready but not promoted in manual mode:
 crucis promote --run-id <run_id>
 ```
 
-The run ID is shown in `crucis checkpoint` output. To enable auto-promotion, set `promotion_mode: auto` in `.crucis/settings.yaml`.
+The run ID is shown in `crucis status` output (alias: `crucis summary`). To enable auto-promotion, set `promotion_mode: auto` in `.crucis/settings.yaml`.

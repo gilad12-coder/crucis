@@ -109,7 +109,7 @@ def build_evaluation_prompt(
         Computed text result for this operation.
     """
     if not test_paths:
-        return "No generated train suites were provided. Make no changes."
+        return "No generated test suites were provided. Make no changes."
 
     files = ", ".join(str(path) for path in test_paths)
     return render(

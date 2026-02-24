@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -13,15 +13,35 @@ _OBJECTIVE_FILENAME = "objective.yaml"
 _PROFILES_DIR = "constraints"
 _PROFILES_FILENAME = "profiles.yaml"
 _RECOMMENDED_PROFILE = "recommended"
+_EXISTING_CODEBASE_SCAN_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        "dist",
+        "build",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".vscode",
+    }
+)
 
 _SETTINGS_TEMPLATE = """\
 schema_version: 1
 
-# Background optimizer (optional — requires an OpenAI API key).
+# Background optimizer (optional — requires an API key for the reflection_lm provider).
 # The optimizer refines generation prompts after each fit run.
 optimizer:
   enabled: false
-  reflection_lm: openai/gpt-5.1  # LiteLLM model string for optimizer reflection
+  reflection_lm: openai/gpt-5.2
+  reflection_api_key: null
   max_metric_calls: 24
   train_split_ratio: 0.7
   max_examples_per_run: 24
@@ -35,16 +55,107 @@ optimizer:
 
 # Agent configuration. Valid agents: claude, codex
 # Leave null to use defaults (claude / claude-opus-4-6).
+# Model defaults per agent:
+#   claude -> claude-opus-4-6
+#   codex  -> (uses codex built-in default; set model to null)
 agents:
-  generation_agent: null   # "claude" or "codex"
-  generation_model: null   # e.g. "claude-opus-4-6", "o4-mini" (null = agent default)
+  generation_agent: null
+  generation_model: null
   critic_agent: null
   critic_model: null
   implementation_agent: null
   implementation_model: null
-  max_iterations: null     # max generation/evaluation retries (null = 3)
-  max_budget_usd: null     # per-agent call budget cap (null = 5.00)
+  api_key: null
+  max_iterations: null
+  max_budget_usd: null
 """
+
+_AGENTS = ["claude", "codex"]
+
+_AGENT_MODELS: dict[str, list[str]] = {
+    "claude": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    "codex": ["o4-mini", "o3"],
+}
+
+_CHOICE_PROMPT = "Choice [1]: "
+
+
+def prompt_model_selection() -> tuple[str | None, str | None]:
+    """Interactively ask the user to pick an agent and model.
+
+    Returns:
+        Tuple of (agent, model), or (None, None) when non-interactive.
+    """
+    if not sys.stdin.isatty():
+        return None, None
+
+    print("\nConfigure agent and model for this workspace.")
+    print("\nWhich agent?")
+    for i, name in enumerate(_AGENTS, 1):
+        suffix = " (default)" if i == 1 else ""
+        print(f"  {i}. {name}{suffix}")
+    agent = _read_choice(_AGENTS)
+
+    models = _AGENT_MODELS[agent]
+    print(f"\nWhich model? ({agent})")
+    for i, name in enumerate(models, 1):
+        suffix = " (default)" if i == 1 else ""
+        print(f"  {i}. {name}{suffix}")
+    model = _read_choice(models)
+
+    print(f"\nUsing {agent} with {model}\n")
+    return agent, model
+
+
+def _read_choice(options: list[str]) -> str:
+    """Read a numbered choice from stdin, defaulting to the first option.
+
+    Args:
+        options: List of option strings.
+
+    Returns:
+        The selected option string.
+    """
+    from crucis.display import prompt_input
+
+    raw = prompt_input(_CHOICE_PROMPT)
+    if not raw:
+        return options[0]
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(options):
+            return options[idx]
+    except ValueError:
+        pass
+    return options[0]
+
+
+def _render_settings_template(
+    agent: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Render settings template with agent/model values substituted.
+
+    Args:
+        agent: Agent name to set for all agent fields, or None for null.
+        model: Model name to set for all model fields, or None for null.
+
+    Returns:
+        Settings YAML string with values filled in.
+    """
+    text = _SETTINGS_TEMPLATE
+    if agent is not None:
+        agent_val = agent
+        text = text.replace("generation_agent: null", f"generation_agent: {agent_val}")
+        text = text.replace("critic_agent: null", f"critic_agent: {agent_val}")
+        text = text.replace("implementation_agent: null", f"implementation_agent: {agent_val}")
+    if model is not None:
+        model_val = model
+        text = text.replace("generation_model: null", f"generation_model: {model_val}")
+        text = text.replace("critic_model: null", f"critic_model: {model_val}")
+        text = text.replace("implementation_model: null", f"implementation_model: {model_val}")
+    return text
+
 
 _TEMPLATES: dict[str, dict] = {
     "factorial": {
@@ -56,7 +167,7 @@ _TEMPLATES: dict[str, dict] = {
                 "description": "Return n! for non-negative n. "
                 "Raise ValueError for negative input.",
                 "signature": "factorial(n: int) -> int",
-                "train_evals": [
+                "examples": [
                     {"input": "(0,)", "output": "1"},
                     {"input": "(1,)", "output": "1"},
                     {"input": "(5,)", "output": "120"},
@@ -72,7 +183,7 @@ _TEMPLATES: dict[str, dict] = {
                 "name": "add",
                 "description": "Return the sum of two integers.",
                 "signature": "add(a: int, b: int) -> int",
-                "train_evals": [
+                "examples": [
                     {"input": "(1, 2)", "output": "3"},
                     {"input": "(0, 0)", "output": "0"},
                     {"input": "(-1, 1)", "output": "0"},
@@ -82,7 +193,7 @@ _TEMPLATES: dict[str, dict] = {
                 "name": "subtract",
                 "description": "Return the difference of two integers.",
                 "signature": "subtract(a: int, b: int) -> int",
-                "train_evals": [
+                "examples": [
                     {"input": "(5, 3)", "output": "2"},
                     {"input": "(0, 0)", "output": "0"},
                 ],
@@ -91,7 +202,7 @@ _TEMPLATES: dict[str, dict] = {
                 "name": "multiply",
                 "description": "Return the product of two integers.",
                 "signature": "multiply(a: int, b: int) -> int",
-                "train_evals": [
+                "examples": [
                     {"input": "(3, 4)", "output": "12"},
                     {"input": "(0, 5)", "output": "0"},
                 ],
@@ -101,15 +212,52 @@ _TEMPLATES: dict[str, dict] = {
 }
 
 
-def _build_objective(name: str) -> dict:
+def _build_existing_codebase_objective(name: str) -> dict:
+    """Build objective scaffold for repositories that already contain source code.
+
+    Args:
+        name: Project name used for objective/task naming.
+
+    Returns:
+        Objective data dict oriented toward existing-file edits.
+    """
+    return {
+        "name": name,
+        "description": (
+            "Define the behavior change you want in this existing codebase. "
+            "Set target_files/context_files to real project modules."
+        ),
+        "tests_constraint_profile": _RECOMMENDED_PROFILE,
+        "implementation_constraint_profile": "default",
+        "target_files": [],
+        "tasks": [
+            {
+                "name": name,
+                "description": "Implement the requested behavior in existing project files.",
+                "signature": None,
+                "target_files": [],
+                "context_files": [],
+                "existing_tests": [],
+                "examples": [{"input": "(...)", "output": "..."}],
+                "holdout": [],
+            }
+        ],
+    }
+
+
+def _build_objective(name: str, existing_codebase: bool = False) -> dict:
     """Build an objective dict from a built-in template or generic fallback.
 
     Args:
         name: Project name (may match a built-in template key).
+        existing_codebase: Whether scaffold should target an existing repository.
 
     Returns:
         Objective data dict ready for YAML serialization.
     """
+    if existing_codebase:
+        return _build_existing_codebase_objective(name)
+
     template = _TEMPLATES.get(name)
     if template is not None:
         return {
@@ -121,21 +269,20 @@ def _build_objective(name: str) -> dict:
         }
     return {
         "name": name,
-        "description": f"Compute double of the input integer.",
-        "signature": f"{name}(n: int) -> int",
+        "description": f"Describe what {name} does.",
+        "signature": f"{name}(x: Any) -> Any",
         "tests_constraint_profile": _RECOMMENDED_PROFILE,
         "implementation_constraint_profile": _RECOMMENDED_PROFILE,
         "target_files": ["src/solution.py"],
         "tasks": [
             {
                 "name": name,
-                "description": f"Return 2 * n.",
-                "signature": f"{name}(n: int) -> int",
-                "train_evals": [
-                    {"input": "(1,)", "output": "2"},
-                    {"input": "(2,)", "output": "4"},
-                    {"input": "(3,)", "output": "6"},
+                "description": f"Implement {name}. Replace this with a real description.",
+                "signature": f"{name}(x: Any) -> Any",
+                "examples": [
+                    {"input": "(1,)", "output": "1"},
                 ],
+                "holdout": [],
             }
         ],
     }
@@ -161,11 +308,11 @@ _DEFAULT_PROFILES = {
                 "no_mutable_defaults": True,
                 "no_eval": True,
                 "no_exec": True,
-                "no_magic_numbers": True,
             },
             "secondary": {
                 "require_docstrings": True,
                 "no_print_statements": True,
+                "no_magic_numbers": True,
             },
         },
     },
@@ -173,7 +320,33 @@ _DEFAULT_PROFILES = {
 }
 
 
-def scaffold_workspace(workspace: Path, name: str = "my_project") -> list[Path]:
+def detect_existing_codebase(workspace: Path) -> bool:
+    """Return True when workspace appears to already contain Python source files.
+
+    Args:
+        workspace: Workspace root directory to inspect.
+
+    Returns:
+        True when Python files are present outside ignored cache/tooling folders.
+    """
+    if not workspace.exists():
+        return False
+    for python_file in workspace.rglob("*.py"):
+        if not python_file.is_file():
+            continue
+        if any(part in _EXISTING_CODEBASE_SCAN_SKIP_DIRS for part in python_file.parts):
+            continue
+        return True
+    return False
+
+
+def scaffold_workspace(
+    workspace: Path,
+    name: str = "my_project",
+    existing_codebase: bool | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+) -> list[Path]:
     """Create starter files for a new Crucis workspace.
 
     Skips any file that already exists.
@@ -181,13 +354,20 @@ def scaffold_workspace(workspace: Path, name: str = "my_project") -> list[Path]:
     Args:
         workspace: Workspace root directory.
         name: Project name used in the objective template.
+        existing_codebase: Explicitly force existing-codebase scaffolding mode.
+            When None, mode is auto-detected from existing Python files.
+        agent: Agent name to write into settings.yaml, or None for null.
+        model: Model name to write into settings.yaml, or None for null.
 
     Returns:
         List of file paths that were created.
     """
     created: list[Path] = []
+    existing_mode = (
+        detect_existing_codebase(workspace) if existing_codebase is None else existing_codebase
+    )
 
-    objective_data = _build_objective(name)
+    objective_data = _build_objective(name, existing_codebase=existing_mode)
     objective_path = workspace / _OBJECTIVE_FILENAME
     if not objective_path.exists():
         objective_path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,18 +391,19 @@ def scaffold_workspace(workspace: Path, name: str = "my_project") -> list[Path]:
     settings_file = settings_path(workspace)
     if not settings_file.exists():
         settings_file.parent.mkdir(parents=True, exist_ok=True)
-        settings_file.write_text(_SETTINGS_TEMPLATE, encoding=TEXT_ENCODING)
+        settings_file.write_text(_render_settings_template(agent, model), encoding=TEXT_ENCODING)
         created.append(settings_file)
 
-    target_dir = workspace / "src"
-    target_file = target_dir / "solution.py"
-    if not target_file.exists():
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_file.write_text(
-            "# Implementation will be generated during evaluation phase.\n",
-            encoding=TEXT_ENCODING,
-        )
-        created.append(target_file)
+    if not existing_mode:
+        target_dir = workspace / "src"
+        target_file = target_dir / "solution.py"
+        if not target_file.exists():
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file.write_text(
+                "# Implementation will be generated during evaluation phase.\n",
+                encoding=TEXT_ENCODING,
+            )
+            created.append(target_file)
 
     return created
 
@@ -266,11 +447,11 @@ profiles:
       no_mutable_defaults: true
       no_eval: true
       no_exec: true
-      no_magic_numbers: true
     secondary:
       require_docstrings: true
       no_print_statements: true
       no_debugger_statements: true
+      no_magic_numbers: true
 
   config_hygiene:
     primary:
@@ -299,7 +480,7 @@ tasks:
   - name: <task_name>
     description: <what this task does>
     signature: <function_name(args) -> return_type>
-    train_evals:
+    examples:
       - input: "(arg1, arg2)"
         output: "expected_result"
 """
@@ -372,12 +553,15 @@ def run_agent_onboarding(workspace: Path, agent: str, model: str) -> bool:
     if agent == "codex":
         backup = _write_codex_instructions(workspace, prompt)
         try:
-            exit_code = run_interactive_agent(prompt, agent, model, cwd=workspace)
+            exit_code, error_msg = run_interactive_agent(prompt, agent, model, cwd=workspace)
         finally:
             _restore_agents_md(workspace, backup)
     else:
-        exit_code = run_interactive_agent(prompt, agent, model, cwd=workspace)
+        exit_code, error_msg = run_interactive_agent(prompt, agent, model, cwd=workspace)
 
+    if exit_code != 0 and error_msg:
+        from crucis.display import display_warning
+        display_warning(error_msg)
     return exit_code == 0
 
 

@@ -1,56 +1,50 @@
 # Crucis
 
-**Objective-driven coding with adversarial verification.**
+**Verification-first coding — tests are generated and adversarially attacked before any implementation is written.**
 
-Tests are generated and adversarially attacked before any implementation is written. A cheating probe tries to pass tests by faking results. Only when tests survive does the implementation agent work — and hidden holdout evals provide a final safety net.
+Four layers protect against false-passing code: AST-based constraints reject weak tests, an adversarial critic finds gaps, a cheating probe exploits them, and hidden holdout evals verify the final result. Only when tests survive all four does the implementation agent write code.
+
+## Quick start — new project
+
+```bash
+uv pip install crucis
+crucis init --name add --no-agent
+crucis run
+```
+
+## Quick start — existing codebase
+
+```bash
+uv pip install crucis
+crucis init --existing-codebase --no-agent
+# Edit objective.yaml: set target_files, context_files, existing_tests
+crucis run
+```
 
 ## Install
 
 ```bash
-pip install crucis
+uv pip install crucis        # recommended
+pip install crucis            # also works
 ```
 
-Requires Python 3.12+ and at least one agent CLI (`claude` or `codex`) on your PATH.
+Requires Python 3.10+ (3.12+ recommended) and at least one agent CLI (`claude` or `codex`) on your PATH.
 
-## Usage
-
-```yaml
-# objective.yaml
-name: add
-description: Add two integers and return the sum.
-signature: "add(a: int, b: int) -> int"
-train_evals:
-  - input: "(1, 2)"
-    output: "3"
-holdout_evals:
-  - input: "(100, 23)"
-    output: "123"
-target_files:
-  - "src/add.py"
-```
+Source-tree development (without editable install):
 
 ```bash
-crucis fit objective.yaml -y --evaluate
+./crucis-dev doctor --workspace .
+./crucis-dev run
 ```
-
-Useful operational commands:
-
-```bash
-# Environment and workspace diagnostics
-crucis doctor --workspace . --objective objective.yaml --profiles constraints/profiles.yaml
-
-# Machine-readable checkpoint status for scripts/automation
-crucis checkpoint --checkpoint .checkpoint.json --json
-
-# Foreground optimizer worker (one-shot by default)
-crucis optimizer-worker --workspace . --json
-```
-
-Crucis now writes structured JSONL run logs under `.crucis/logs/` for fit, evaluate, and optimizer worker runs.
 
 ## Documentation
 
-[Full docs](https://gilad12-coder.github.io/crucis/) — tutorial, architecture, constraints, optimizer, troubleshooting.
+[Full docs](https://gilad12-coder.github.io/crucis/) — quickstarts, reference, configuration, troubleshooting.
+
+- [Start Here](https://gilad12-coder.github.io/crucis/start-here/) — prerequisites and orientation
+- [New Project Quickstart](https://gilad12-coder.github.io/crucis/quickstart-new-project/) — build a verified function from scratch
+- [Existing Codebase Quickstart](https://gilad12-coder.github.io/crucis/quickstart-existing-codebase/) — add verification to your current project
+- [CLI Reference](https://gilad12-coder.github.io/crucis/cli-reference/) — all commands and options
 
 ## License
 

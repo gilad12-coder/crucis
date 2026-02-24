@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-from enum import StrEnum
+import sys
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Backport of StrEnum for Python 3.10."""
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator

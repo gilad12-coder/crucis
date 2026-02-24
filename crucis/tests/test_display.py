@@ -31,10 +31,10 @@ def _capture_console() -> tuple[Console, StringIO]:
 
 
 def test_display_train_suite_source_renders_title():
-    """Train suite panel should render expected title text."""
+    """Test suite panel should render expected title text."""
     console, buf = _capture_console()
     display_train_suite_source("def test_x():\n    assert True", console=console)
-    assert "Generated Train Suite" in buf.getvalue()
+    assert "Generated Test Suite" in buf.getvalue()
 
 
 def test_display_adversarial_report_shows_sections():
@@ -44,6 +44,7 @@ def test_display_adversarial_report_shows_sections():
         attack_vectors=["hardcode returns"],
         generalization_gaps=["no edge case"],
         suggested_probe_tests=["randomized inputs"],
+        correctness_issues=[],
     )
     display_adversarial_report(report, console=console)
     output = buf.getvalue()

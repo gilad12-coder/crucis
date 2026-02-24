@@ -1,0 +1,61 @@
+{#- Semantic validation prompt for objective eval correctness review. -#}
+You are a specification reviewer. Your job is to verify that every evaluation case in an objective file has the correct expected output given the described behavior.
+
+## Objective: {{ objective.name }}
+
+Description: {{ objective.description }}
+
+{% if objective.signature %}
+Signature: `{{ objective.signature }}`
+{% endif %}
+
+{% for task in all_tasks %}
+### Task: {{ task.name }}
+{% if task.description %}
+Description: {{ task.description }}
+{% endif %}
+{% if task.signature %}
+Signature: `{{ task.signature }}`
+{% endif %}
+
+{% if task.train_evals %}
+Train evals:
+{% for ev in task.train_evals %}
+  {{ loop.index0 }}. {{ task.name }}({{ ev.input }}) -> {{ ev.output }}
+{% endfor %}
+{% endif %}
+
+{% if task.holdout_evals %}
+Holdout evals:
+{% for ev in task.holdout_evals %}
+  {{ loop.index0 }}. {{ task.name }}({{ ev.input }}) -> {{ ev.output }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+
+For each eval case, reason through the described algorithm step by step and verify the expected output is correct. Also check whether the description is precise enough to determine every eval answer unambiguously.
+
+Think through your analysis, then provide your findings as a JSON object:
+
+<output_schema>
+{
+  "issues": [
+    {
+      "severity": "error or warning",
+      "eval_type": "train or holdout",
+      "task": "task_name",
+      "case_index": 0,
+      "input": "the input expression",
+      "expected": "the expected output",
+      "explanation": "what is wrong or ambiguous",
+      "suggestion": "concrete fix: either the corrected expected value OR a description clarification"
+    }
+  ],
+  "summary": "one-line overall assessment"
+}
+</output_schema>
+
+Use "error" for incorrect expected values. Use "warning" for ambiguous descriptions where the expected value could go either way.
+For each issue, provide a concrete suggestion: either the corrected expected output value (e.g. "Expected output should be True") or a description change (e.g. "Add rule: reject all-zero inputs").
+If all cases are correct and the description is clear, return `{"issues": [], "summary": "All eval cases are correct."}`.

@@ -1,10 +1,10 @@
 {#- Shared formatting macros for Crucis prompt templates. -#}
 
-{#- Format train evaluation examples as a bullet list. -#}
-{% macro train_evals(objective) %}
+{#- Format example I/O pairs as a bullet list. -#}
+{% macro examples(objective) %}
 {% if objective.train_evals %}
 {% for ex in objective.train_evals %}
-  - {{ objective.name }}({{ ex.input }}) -> {{ ex.output }}
+  - {{ objective.name }}({{ ex.input | unwrap_args }}) -> {{ ex.output }}
 {% endfor %}
 {% else %}
 {{ NONE_PLACEHOLDER }}

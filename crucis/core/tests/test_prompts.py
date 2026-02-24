@@ -43,9 +43,9 @@ def _constraints() -> TaskConstraints:
 
 
 def test_generation_prompt_includes_train_evals_not_holdout_literals():
-    """Generation prompt should contain train evals and hide holdout values."""
+    """Generation prompt should contain examples and hide holdout values."""
     prompt = build_generation_prompt(_objective(), _constraints())
-    assert "Train evals" in prompt
+    assert "Examples" in prompt
     assert "(1, 2)" in prompt
     assert "(999, 1)" not in prompt
 
@@ -81,13 +81,13 @@ def test_evaluation_prompt_contains_curriculum_and_holdout_warning():
         curriculum_path=Path("curriculum.md"),
     )
     assert "curriculum.md" in prompt
-    assert "holdout evaluations" in prompt.lower()
+    assert "holdout checks" in prompt.lower()
 
 
 def test_evaluation_prompt_empty_paths_message():
     """Empty test paths should return no-op message."""
     prompt = build_evaluation_prompt([])
-    assert "No generated train suites" in prompt
+    assert "No generated test suites" in prompt
 
 
 def test_policy_injection_appears_in_prompt_sections():

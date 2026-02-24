@@ -1,7 +1,15 @@
 """Pydantic models for Crucis objective, checkpoint, and reports."""
 
 import ast
-from enum import StrEnum
+import sys
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Backport of StrEnum for Python 3.10."""
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +25,7 @@ class ConstraintSet(BaseModel):
     count_docstrings_in_function_lines: bool = True
     max_total_lines: int | None = Field(default=None, ge=1)
     max_time_complexity: str | None = None
+    max_space_complexity: str | None = None
     max_parameters: int | None = Field(default=None, ge=0)
     max_nested_depth: int | None = Field(default=None, ge=1)
     max_return_statements: int | None = Field(default=None, ge=1)
@@ -136,6 +145,7 @@ class AdversarialReport(BaseModel):
     attack_vectors: list[str]
     generalization_gaps: list[str]
     suggested_probe_tests: list[str]
+    correctness_issues: list[str]
     probe_code: str | None = None
     probe_succeeded: bool = False
 
@@ -171,6 +181,7 @@ class CheckpointState(BaseModel):
     """Persisted state of a crucis checkpoint."""
 
     task_progress: list[TaskProgress]
+    evaluation_passed: bool = False
 
 
 def validate_eval_expression(expr: str, owner: str, field: str, idx: int) -> None:
@@ -202,7 +213,12 @@ def validate_holdout_eval_entries(holdout_evals: list[dict], owner: str) -> None
             raise ValueError(f"{owner}[{idx}] does not support raw")
         if _INPUT_KEY not in item or _OUTPUT_KEY not in item:
             raise ValueError(f"{owner}[{idx}] must contain both input and output")
-        if not isinstance(item[_INPUT_KEY], str) or not isinstance(item[_OUTPUT_KEY], str):
-            raise ValueError(f"{owner}[{idx}] input/output must be strings")
+        for field in (_INPUT_KEY, _OUTPUT_KEY):
+            val = item[field]
+            if not isinstance(val, str):
+                raise ValueError(
+                    f"{owner}[{idx}] {field} must be a string, "
+                    f"got {type(val).__name__}({val!r}) — wrap in quotes"
+                )
         validate_eval_expression(item[_INPUT_KEY], owner, _INPUT_KEY, idx)
         validate_eval_expression(item[_OUTPUT_KEY], owner, _OUTPUT_KEY, idx)

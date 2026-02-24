@@ -2,7 +2,7 @@
 
 from jinja2 import Environment, PackageLoader
 
-from crucis.prompts._filters import bool_label, path_to_module, readable_name
+from crucis.prompts._filters import bool_label, path_to_module, readable_name, unwrap_args
 
 NONE_PLACEHOLDER = "  (none)"
 NOT_SPECIFIED = "not specified"
@@ -24,6 +24,7 @@ def _create_environment() -> Environment:
     env.filters["path_to_module"] = path_to_module
     env.filters["bool_label"] = bool_label
     env.filters["readable_name"] = readable_name
+    env.filters["unwrap_args"] = unwrap_args
     env.globals["NONE_PLACEHOLDER"] = NONE_PLACEHOLDER
     env.globals["NOT_SPECIFIED"] = NOT_SPECIFIED
     return env

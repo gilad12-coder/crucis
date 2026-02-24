@@ -4,11 +4,11 @@ Crucis includes a background policy optimizer powered by [GEPA](https://github.c
 
 ## How It Works
 
-1. After `crucis fit` or `crucis evaluate` completes, an optimization job is queued.
+1. After `crucis run` completes, an optimization job is queued.
 2. A detached worker process picks up the job.
 3. The worker builds examples from the objective and checkpoint.
 4. GEPA generates candidate policies (prompt directives for generation, adversary, and evaluation agents).
-5. Each candidate is scored by running `crucis evaluate` in an isolated workspace.
+5. Each candidate is scored by running the evaluation step in an isolated workspace.
 6. If the candidate beats the baseline by `min_score_delta`, it's marked ready for promotion.
 
 ## Policy Structure
@@ -85,7 +85,7 @@ ready -> promote
 
 ## Scoring
 
-Each example is scored by running `crucis evaluate` in a temporary isolated workspace:
+Each example is scored by running the evaluation step in a temporary isolated workspace:
 
 ```
 final_score = pass_weight * correctness + speed_weight * speed
@@ -107,13 +107,13 @@ After the optimizer marks a candidate as ready:
 
 ```bash
 # Check status
-crucis checkpoint
+crucis status
 
 # Promote the winning candidate
 crucis promote --run-id <run_id>
 ```
 
-The `checkpoint` command shows optimizer status including whether a candidate is ready and its run ID.
+The `status` command (alias: `summary`) shows optimizer status including whether a candidate is ready and its run ID.
 
 ### Auto mode
 
@@ -131,7 +131,7 @@ crucis optimizer-worker --workspace . --json
 crucis optimizer-worker --workspace . --loop
 
 # Scriptable optimizer + checkpoint status
-crucis checkpoint --json
+crucis status --json
 ```
 
 ## Settings
@@ -142,7 +142,7 @@ All optimizer settings live in `.crucis/settings.yaml` under the `optimizer` key
 |---------|---------|-------------|
 | `enabled` | `true` | Enable/disable background optimization |
 | `max_metric_calls` | `24` | Max scoring evaluations per run |
-| `reflection_lm` | `openai/gpt-5.1` | LLM used for GEPA reflection |
+| `reflection_lm` | `openai/gpt-5.2` | LLM used for GEPA reflection |
 | `train_split_ratio` | `0.7` | Train/validation split for examples |
 | `max_examples_per_run` | `24` | Max examples per optimization run |
 | `evaluator_timeout_sec` | `180` | Timeout for each evaluation attempt |
@@ -171,7 +171,7 @@ optimizer:
 Set the environment variable to skip optimization entirely:
 
 ```bash
-CRUCIS_DISABLE_BACKGROUND_OPTIMIZER=1 crucis fit objective.yaml
+CRUCIS_DISABLE_BACKGROUND_OPTIMIZER=1 crucis run
 ```
 
 Or set `enabled: false` in `.crucis/settings.yaml`.

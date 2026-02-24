@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,7 +19,33 @@ from crucis.defaults import TEXT_ENCODING
 from crucis.execution.sandbox import check_docker_available
 from crucis.intake.objective import parse_objective
 from crucis.persistence.checkpoint import load_checkpoint
-from crucis.persistence.settings import RuntimeSettings, settings_path
+from crucis.persistence.settings import (
+    REFLECTION_LM_PREFIX_TO_ENV,
+    RuntimeSettings,
+    settings_path,
+    try_load_runtime_settings,
+)
+
+
+_MASK_THRESHOLD = 8
+_MASK_VISIBLE = 4
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for safe display in logs and diagnostics.
+
+    Args:
+        key: Raw API key string.
+
+    Returns:
+        Masked key showing first 4 and last 4 chars for long keys,
+        or all asterisks for short keys.
+    """
+    if not key:
+        return ""
+    if len(key) < _MASK_THRESHOLD:
+        return "*" * len(key)
+    return key[:_MASK_VISIBLE] + "..." + key[-_MASK_VISIBLE:]
 
 
 @dataclass(slots=True)
@@ -98,7 +125,7 @@ def collect_preflight_checks(
     for agent in sorted({agent for agent in required_agents if agent}):
         checks.append(_check_agent_binary(agent))
 
-    checks.extend(_check_required_api_keys(required_agents))
+    checks.extend(_check_required_api_keys(required_agents, workspace))
 
     nesting_check = _check_claudecode_nesting(required_agents)
     if nesting_check is not None:
@@ -106,6 +133,11 @@ def collect_preflight_checks(
 
     checks.extend(_check_agent_model_coherence(config))
     checks.append(_check_runtime_settings(workspace))
+
+    optimizer_check = _check_optimizer_api_key(workspace)
+    if optimizer_check is not None:
+        checks.append(optimizer_check)
+
     checks.append(_check_docker(require_docker=require_docker))
     return checks
 
@@ -203,28 +235,36 @@ def _check_git_repository(workspace: Path) -> DiagnosticCheck:
     )
 
 
+_RECOMMENDED_PYTHON = (3, 12)
+_MINIMUM_PYTHON = (3, 10)
+
+
 def _check_python_version() -> DiagnosticCheck:
     """Validate interpreter version.
 
     Returns:
         Result of Python version diagnostics check.
     """
-    required = (3, 12)
     version = sys.version_info
-    if (version.major, version.minor) >= required:
+    current = (version.major, version.minor)
+    label = f"Python {version.major}.{version.minor}.{version.micro}"
+    if current >= _RECOMMENDED_PYTHON:
         return DiagnosticCheck(
             id="python_version",
             status="ok",
-            message=f"Python {version.major}.{version.minor}.{version.micro}",
+            message=label,
+        )
+    if current >= _MINIMUM_PYTHON:
+        return DiagnosticCheck(
+            id="python_version",
+            status="ok",
+            message=f"{label} (3.12+ recommended)",
         )
     return DiagnosticCheck(
         id="python_version",
         status="fail",
-        message=(
-            f"Python {version.major}.{version.minor}.{version.micro} is unsupported "
-            "(requires >=3.12)"
-        ),
-        hint="Use Python 3.12+ and recreate the environment.",
+        message=f"{label} is unsupported (requires >=3.10)",
+        hint="Use Python 3.10+ and recreate the environment.",
     )
 
 
@@ -279,15 +319,66 @@ _AGENT_API_KEYS: dict[str, str] = {
 """Environment variable required by each known agent."""
 
 
-def _check_required_api_keys(required_agents: Iterable[str]) -> list[DiagnosticCheck]:
+def _has_claude_login_session() -> bool:
+    """Check whether Claude CLI has an active authenticated session."""
+    claude_binary = shutil.which("claude")
+    if claude_binary is None:
+        return False
+    try:
+        result = subprocess.run(
+            [claude_binary, "auth", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    output = result.stdout.strip()
+    return '"loggedIn": true' in output or '"loggedIn":true' in output
+
+
+def _has_codex_login_session() -> bool:
+    """Check whether Codex CLI has an active authenticated session."""
+    codex_binary = shutil.which("codex")
+    if codex_binary is None:
+        return False
+    try:
+        result = subprocess.run(
+            [codex_binary, "login", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip().lower()
+    return "logged in" in output
+
+
+def _check_required_api_keys(
+    required_agents: Iterable[str],
+    workspace: Path | None = None,
+) -> list[DiagnosticCheck]:
     """Check that API keys are set for the configured agents.
 
     Args:
         required_agents: Agent binaries required for this flow.
+        workspace: Workspace root directory (used to check YAML api_key).
 
     Returns:
         List of API key availability checks.
     """
+    yaml_key: str | None = None
+    if workspace is not None:
+        settings = try_load_runtime_settings(workspace)
+        if settings is not None:
+            yaml_key = settings.agents.api_key or None
     checks: list[DiagnosticCheck] = []
     seen: set[str] = set()
     for agent in sorted({a for a in required_agents if a}):
@@ -295,7 +386,7 @@ def _check_required_api_keys(required_agents: Iterable[str]) -> list[DiagnosticC
         if env_key is None or env_key in seen:
             continue
         seen.add(env_key)
-        if os.environ.get(env_key):
+        if os.environ.get(env_key) or yaml_key:
             checks.append(
                 DiagnosticCheck(
                     id=f"api_key_{agent}",
@@ -303,16 +394,38 @@ def _check_required_api_keys(required_agents: Iterable[str]) -> list[DiagnosticC
                     message=f"{env_key} is set",
                 )
             )
-        else:
+            continue
+        if agent == "claude" and _has_claude_login_session():
             checks.append(
                 DiagnosticCheck(
-                    id=f"api_key_{agent}",
-                    status="warn",
-                    message=f"{env_key} is not set (required by {agent} agent)",
-                    hint=f"Export {env_key} or configure a different agent "
-                    "in .crucis/settings.yaml.",
+                    id="api_key_claude",
+                    status="ok",
+                    message="Claude CLI login session is active (ANTHROPIC_API_KEY not required)",
                 )
             )
+            continue
+        if agent == "codex" and _has_codex_login_session():
+            checks.append(
+                DiagnosticCheck(
+                    id="api_key_codex",
+                    status="ok",
+                    message="Codex CLI login session is active (OPENAI_API_KEY not required)",
+                )
+            )
+            continue
+
+        hint = (
+            f"Set api_key in .crucis/settings.yaml, run `{agent} login`, "
+            f"or export {env_key}."
+        )
+        checks.append(
+            DiagnosticCheck(
+                id=f"api_key_{agent}",
+                status="warn",
+                message=f"{env_key} is not set (required by {agent} agent)",
+                hint=hint,
+            )
+        )
     return checks
 
 
@@ -432,6 +545,35 @@ def _check_runtime_settings(workspace: Path) -> DiagnosticCheck:
     )
 
 
+def _check_optimizer_api_key(workspace: Path) -> DiagnosticCheck | None:
+    """Warn when the optimizer's reflection_lm API key is missing.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        Warning check when key is missing, None when ok or optimizer disabled.
+    """
+    settings = try_load_runtime_settings(workspace)
+    if settings is None:
+        return None
+    if settings.optimizer.reflection_api_key:
+        return None
+    lm = settings.optimizer.reflection_lm
+    for prefix, env_key in REFLECTION_LM_PREFIX_TO_ENV.items():
+        if lm.startswith(prefix) and not os.environ.get(env_key):
+            return DiagnosticCheck(
+                id="optimizer_api_key",
+                status="warn",
+                message=f"{env_key} is not set (required by optimizer reflection_lm `{lm}`)",
+                hint=(
+                    f"Set reflection_api_key in .crucis/settings.yaml, "
+                    f"or export {env_key}."
+                ),
+            )
+    return None
+
+
 def _check_docker(require_docker: bool) -> DiagnosticCheck:
     """Check Docker availability (warn by default, fail when required).
 
@@ -448,12 +590,17 @@ def _check_docker(require_docker: bool) -> DiagnosticCheck:
             status="ok",
             message="Docker sandbox is available",
         )
-    status = "fail" if require_docker else "warn"
+    if require_docker:
+        return DiagnosticCheck(
+            id="docker",
+            status="fail",
+            message="Docker sandbox is unavailable",
+            hint="Start Docker to enable isolated sandbox execution.",
+        )
     return DiagnosticCheck(
         id="docker",
-        status=status,
-        message="Docker sandbox is unavailable",
-        hint="Start Docker to enable isolated sandbox execution.",
+        status="ok",
+        message="Docker sandbox is unavailable (optional)",
     )
 
 
@@ -541,7 +688,7 @@ def _check_checkpoint(workspace: Path, checkpoint_path: Path) -> DiagnosticCheck
             id="checkpoint",
             status="fail",
             message=f"Checkpoint file not found at {resolved}",
-            hint="Run `crucis fit` first or pass an existing checkpoint path.",
+            hint="Run `crucis run` first or pass an existing checkpoint path.",
         )
     try:
         state = load_checkpoint(resolved)
@@ -557,7 +704,7 @@ def _check_checkpoint(workspace: Path, checkpoint_path: Path) -> DiagnosticCheck
             id="checkpoint",
             status="fail",
             message=f"Checkpoint file not found at {resolved}",
-            hint="Run `crucis fit` first or pass an existing checkpoint path.",
+            hint="Run `crucis run` first or pass an existing checkpoint path.",
         )
     return DiagnosticCheck(
         id="checkpoint",

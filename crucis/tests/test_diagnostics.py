@@ -21,6 +21,7 @@ def _mock_tools_available(monkeypatch) -> None:
     monkeypatch.setattr("crucis.diagnostics.shutil.which", lambda _binary: "/usr/bin/fake")
     monkeypatch.setattr("crucis.diagnostics.importlib.util.find_spec", lambda _name: object())
     monkeypatch.setattr("crucis.diagnostics.check_docker_available", lambda: True)
+    monkeypatch.setattr("crucis.diagnostics._has_codex_login_session", lambda: False)
 
 
 def test_git_repository_check_warns_when_no_git(tmp_path: Path) -> None:
@@ -70,6 +71,47 @@ def test_collect_preflight_checks_reports_missing_agent_binary(
     )
     failed = [check for check in checks if check.status == "fail"]
     assert any(check.id == "agent_missing-agent" for check in failed)
+
+
+def test_collect_preflight_checks_accepts_codex_login_without_api_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Codex login session should satisfy auth checks when OPENAI_API_KEY is absent."""
+    _mock_tools_available(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("crucis.diagnostics._has_codex_login_session", lambda: True)
+
+    checks = collect_preflight_checks(
+        workspace=tmp_path,
+        config=Config(),
+        required_agents={"codex"},
+        require_pytest=False,
+    )
+
+    codex_auth = next(check for check in checks if check.id == "api_key_codex")
+    assert codex_auth.status == "ok"
+    assert "login session" in codex_auth.message
+
+
+def test_collect_preflight_checks_warns_when_codex_has_no_key_or_login(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Codex auth check should warn only when both key and login session are missing."""
+    _mock_tools_available(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("crucis.diagnostics._has_codex_login_session", lambda: False)
+
+    checks = collect_preflight_checks(
+        workspace=tmp_path,
+        config=Config(),
+        required_agents={"codex"},
+        require_pytest=False,
+    )
+
+    codex_auth = next(check for check in checks if check.id == "api_key_codex")
+    assert codex_auth.status == "warn"
+    assert codex_auth.hint is not None
+    assert "codex login" in codex_auth.hint
 
 
 def test_run_doctor_ok_with_valid_workspace_artifacts(tmp_path: Path, monkeypatch) -> None:

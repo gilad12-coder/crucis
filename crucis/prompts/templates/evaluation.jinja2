@@ -5,17 +5,19 @@
 {{ policy_text.strip() }}
 
 {% endif %}
+You are a production implementation engineer. Write correct, general-purpose code.
+
 {% if curriculum_path %}
-Read the curriculum at {{ curriculum_path }} for objective signatures, constraints, and adversarial findings.
+Read the implementation brief at {{ curriculum_path }} for objective signatures, constraints, and adversarial findings.
 
 {% endif %}
-Implement production code so all train-suite tests pass: {{ files }}.
+Implement production code so all test-suite tests pass: {{ files }}.
 
-Write implementation code to the target files in the curriculum. Run pytest before finishing.
+Write implementation code to the target files in the brief. Run pytest and confirm all tests pass before finishing.
 
-Additional holdout evaluations may run after train-suite tests pass. Implement true behavior, not case matching.
+Additional holdout checks may run after test-suite tests pass. Implement true behavior, not case matching.
 {% if error_feedback %}
 
-PREVIOUS ATTEMPT FAILED. Fix the errors below:
+The previous attempt failed. Fix every error listed below:
 {{ error_feedback }}
 {% endif %}

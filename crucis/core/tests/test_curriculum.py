@@ -51,6 +51,7 @@ def _state() -> CheckpointState:
                     attack_vectors=["hardcode output"],
                     generalization_gaps=["no negative numbers"],
                     suggested_probe_tests=["test randomized values"],
+                    correctness_issues=[],
                 ),
             )
         ]
@@ -74,13 +75,12 @@ def _constraints_map() -> dict[str, TaskConstraints]:
 
 
 def test_build_curriculum_contains_core_sections():
-    """Curriculum should include objective, tasks, constraints, and adversarial findings."""
+    """Curriculum should include objective, tasks, and adversarial findings."""
     curriculum = build_curriculum(_state(), _objective(), _constraints_map())
-    assert "Evaluation Curriculum" in curriculum
+    assert "Implementation Brief" in curriculum
     assert "Objective: calculator" in curriculum
     assert "### add" in curriculum
     assert "attack vectors" in curriculum.lower()
-    assert "primary constraints" in curriculum.lower()
 
 
 def test_build_curriculum_excludes_holdout_literals():
@@ -111,10 +111,10 @@ def test_build_curriculum_omits_implementation_section_when_none():
     assert "implementation constraints" not in curriculum.lower()
 
 
-def test_build_curriculum_labels_test_constraints():
-    """Existing constraints section should be labeled as test constraints."""
+def test_build_curriculum_omits_test_constraints():
+    """Brief should not include test constraints — only implementation constraints matter."""
     curriculum = build_curriculum(_state(), _objective(), _constraints_map())
-    assert "test constraints" in curriculum.lower()
+    assert "test constraints" not in curriculum.lower()
 
 
 def test_write_curriculum_to_workspace(tmp_path):
@@ -124,7 +124,7 @@ def test_write_curriculum_to_workspace(tmp_path):
         tmp_path: Temporary directory provided by pytest.
     """
     path = write_curriculum_to_workspace("# x", tmp_path)
-    assert path.name == "curriculum.md"
+    assert path.name == "brief.md"
     assert path.read_text(encoding="utf-8") == "# x"
 
 
@@ -198,12 +198,9 @@ def test_build_curriculum_includes_context_files(tmp_path):
     )
     assert "Code Context" in curriculum
     assert "CONSTANT = 42" in curriculum
-    assert "Current Target File Contents" in curriculum
-    assert "def add(a, b)" in curriculum
 
 
 def test_build_curriculum_omits_context_sections_when_empty():
     """Curriculum without context_files should not contain context sections."""
     curriculum = build_curriculum(_state(), _objective(), _constraints_map())
     assert "Code Context" not in curriculum
-    assert "Current Target File Contents" not in curriculum

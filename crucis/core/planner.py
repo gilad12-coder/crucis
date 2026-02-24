@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from crucis.cli.runner import run_cli_agent
 from crucis.config import Config
 from crucis.defaults import TEXT_ENCODING
 from crucis.models import ParsedObjective, TaskConstraints
+from crucis.persistence.audit import log_agent_call
+from crucis.persistence.events import EventLogger
 
 _PLAN_FILENAME = "plan.md"
 
@@ -61,6 +64,7 @@ def build_generation_plan(
     objective: ParsedObjective,
     constraints_map: dict[str, TaskConstraints],
     config: Config,
+    logger: EventLogger | None = None,
 ) -> str:
     """Call an agent to generate a structured plan for test-suite generation.
 
@@ -68,16 +72,30 @@ def build_generation_plan(
         objective: Parsed objective data for the current run.
         constraints_map: Mapping of task names to resolved constraints.
         config: Runtime configuration values.
+        logger: Optional event logger for audit trail.
 
     Returns:
         Generated plan content as markdown text.
     """
     prompt = build_plan_prompt(objective, constraints_map)
+    t0 = time.monotonic()
     result = run_cli_agent(
         prompt,
         config.generation_agent,
         config.generation_model,
         config.max_budget_usd,
+    )
+    duration = time.monotonic() - t0
+    log_agent_call(
+        logger,
+        prompt=prompt,
+        result=result,
+        agent=config.generation_agent,
+        model=config.generation_model,
+        budget=config.max_budget_usd,
+        duration_sec=duration,
+        call_site="build_generation_plan",
+        task=objective.name,
     )
     if result.exit_code != 0:
         raise RuntimeError(f"Plan generation failed: {result.stderr}")

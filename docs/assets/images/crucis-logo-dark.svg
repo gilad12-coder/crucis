@@ -9,29 +9,29 @@
       <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000" flood-opacity=".35"/>
     </filter>
     <linearGradient id="a" x1="15%" y1="5%" x2="85%" y2="95%">
-      <stop offset="0%" stop-color="#c59b3c"/>
-      <stop offset="20%" stop-color="#fde08b"/>
-      <stop offset="50%" stop-color="#d4af37"/>
-      <stop offset="80%" stop-color="#fde08b"/>
-      <stop offset="100%" stop-color="#8a5a19"/>
+      <stop offset="0%" stop-color="#a14a2f"/>
+      <stop offset="20%" stop-color="#d97757"/>
+      <stop offset="50%" stop-color="#c15f3c"/>
+      <stop offset="80%" stop-color="#d97757"/>
+      <stop offset="100%" stop-color="#8a3a1f"/>
     </linearGradient>
   </defs>
 
   <!-- Compass rose -->
   <g>
     <circle cx="60" cy="60" r="54.5" fill="url(#a)" filter="url(#b)"/>
-    <circle cx="60" cy="60" r="53.5" fill="#1a1f36"/>
+    <circle cx="60" cy="60" r="53.5" fill="#1a1815"/>
     <circle cx="60" cy="60" r="51.5" fill="none" stroke="url(#a)"/>
-    <circle cx="60" cy="60" r="48" fill="none" stroke="#e8f1fd" stroke-width=".5"/>
-    <circle cx="60" cy="60" r="46" fill="none" stroke="#e8f1fd" stroke-width="4" stroke-dasharray="0.15 0.85"/>
-    <circle cx="60" cy="60" r="44" fill="none" stroke="#e8f1fd" stroke-width=".5"/>
-    <path stroke="#e8f1fd" stroke-width=".5" d="M60 8.5v103M8.5 60h103"/>
-    <path stroke="#e8f1fd" stroke-width=".25" d="m23.6 23.6 72.8 72.8m0-72.8L23.6 96.4"/>
-    <path d="m60 6.5 3 8.5-3 10-3-10Zm0 107 3-8.5-3-10-3 10ZM113.5 60l-8.5-3-10 3 10 3Zm-107 0 8.5-3 10 3-10 3Z" fill="#e8f1fd" stroke="#1a1f36" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="60" cy="60" r="48" fill="none" stroke="#e8e6e3" stroke-width=".5"/>
+    <circle cx="60" cy="60" r="46" fill="none" stroke="#e8e6e3" stroke-width="4" stroke-dasharray="0.15 0.85"/>
+    <circle cx="60" cy="60" r="44" fill="none" stroke="#e8e6e3" stroke-width=".5"/>
+    <path stroke="#e8e6e3" stroke-width=".5" d="M60 8.5v103M8.5 60h103"/>
+    <path stroke="#e8e6e3" stroke-width=".25" d="m23.6 23.6 72.8 72.8m0-72.8L23.6 96.4"/>
+    <path d="m60 6.5 3 8.5-3 10-3-10Zm0 107 3-8.5-3-10-3 10ZM113.5 60l-8.5-3-10 3 10 3Zm-107 0 8.5-3 10 3-10 3Z" fill="#e8e6e3" stroke="#1a1815" stroke-width="1.5" stroke-linejoin="round"/>
     <g filter="url(#c)">
-      <path d="m60 60 2.5 10L60 92l-2.5-22Z" fill="#1a1f36" stroke="#e8f1fd" stroke-width="1.25" stroke-linejoin="round"/>
-      <path d="m60 60 4-12-4-20-4 20Z" fill="#e8f1fd"/>
-      <circle cx="60" cy="60" r="4.5" fill="#e8f1fd" stroke="#1a1f36"/>
+      <path d="m60 60 2.5 10L60 92l-2.5-22Z" fill="#1a1815" stroke="#e8e6e3" stroke-width="1.25" stroke-linejoin="round"/>
+      <path d="m60 60 4-12-4-20-4 20Z" fill="#e8e6e3"/>
+      <circle cx="60" cy="60" r="4.5" fill="#e8e6e3" stroke="#1a1815"/>
       <circle cx="60" cy="60" r="2.5" fill="url(#a)"/>
     </g>
   </g>

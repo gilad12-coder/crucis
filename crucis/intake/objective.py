@@ -1,27 +1,66 @@
 """Parse objective YAML files into strict ParsedObjective models."""
 
+from __future__ import annotations
+
 import re
 from pathlib import Path
 
 import yaml
-
-from crucis.defaults import TEXT_ENCODING
-from crucis.intake.constants import HOLDOUT_EVALS_KEY, NAME_KEY, TRAIN_EVALS_KEY
+from json_repair import repair_json
 from pydantic import ValidationError
 
+from crucis.cli.runner import run_cli_agent
+from crucis.defaults import TEXT_ENCODING
+from crucis.intake.constants import (
+    EXAMPLES_KEY,
+    HOLDOUT_EVALS_KEY,
+    HOLDOUT_KEY,
+    NAME_KEY,
+    TRAIN_EVALS_KEY,
+)
 from crucis.models import ParsedObjective, validate_holdout_eval_entries
+from crucis.prompts import render
 
-_LEGACY_OBJECTIVE_KEYS = {"examples", "public_evals", "hidden_evals", "functions"}
-_LEGACY_TASK_KEYS = {"examples", "public_evals", "hidden_evals"}
-_MIGRATE_HINT = "crucis migrate --objective-in ... --objective-out ..."
 _VALID_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _TARGET_FILES_KEY = "target_files"
 _CONTEXT_FILES_KEY = "context_files"
 _EXISTING_TESTS_KEY = "existing_tests"
 _TASKS_KEY = "tasks"
-_LEGACY_CONSTRAINT_PROFILE_KEY = "constraint_profile"
-_TESTS_CONSTRAINT_PROFILE_KEY = "tests_constraint_profile"
+
+
+_FIELD_ALIASES = {
+    EXAMPLES_KEY: TRAIN_EVALS_KEY,
+    HOLDOUT_KEY: HOLDOUT_EVALS_KEY,
+}
+
+
+def _normalize_field_aliases(data: dict) -> None:
+    """Rewrite user-facing field aliases to internal canonical names.
+
+    Mutates *data* in place. Accepts both ``examples`` and ``train_evals``
+    (and ``holdout`` / ``holdout_evals``).  If both the alias and the
+    canonical key are present, raises ``ValueError``.
+
+    Args:
+        data: Raw YAML mapping to normalize.
+    """
+    for alias, canonical in _FIELD_ALIASES.items():
+        if alias in data:
+            if canonical in data:
+                raise ValueError(
+                    f"Objective contains both `{alias}` and `{canonical}` — use one or the other"
+                )
+            data[canonical] = data.pop(alias)
+    for task in data.get(_TASKS_KEY) or []:
+        if isinstance(task, dict):
+            for alias, canonical in _FIELD_ALIASES.items():
+                if alias in task:
+                    if canonical in task:
+                        raise ValueError(
+                            f"Task contains both `{alias}` and `{canonical}` — use one or the other"
+                        )
+                    task[canonical] = task.pop(alias)
 
 
 def parse_objective(objective_path: Path) -> ParsedObjective:
@@ -46,9 +85,7 @@ def parse_objective(objective_path: Path) -> ParsedObjective:
     if not isinstance(data, dict):
         raise ValueError("Objective file must contain a top-level mapping")
 
-    _assert_no_legacy_objective_keys(data)
-    _assert_no_legacy_task_keys(data)
-    _migrate_constraint_profile_field(data)
+    _normalize_field_aliases(data)
     _assert_valid_objective_shape(data)
     _assert_valid_eval_entries(data)
 
@@ -60,39 +97,6 @@ def parse_objective(objective_path: Path) -> ParsedObjective:
         )
         raise ValueError(f"Invalid objective: {errors}") from None
 
-
-def _assert_no_legacy_objective_keys(data: dict) -> None:
-    """assert no legacy objective keys.
-
-    Args:
-        data: Dictionary payload being validated or migrated.
-    """
-    legacy = sorted(_LEGACY_OBJECTIVE_KEYS.intersection(data.keys()))
-    if legacy:
-        raise ValueError(
-            "Legacy objective keys are not supported in runtime parsing: "
-            f"{legacy}. Migrate first with `{_MIGRATE_HINT}`."
-        )
-
-
-def _assert_no_legacy_task_keys(data: dict) -> None:
-    """assert no legacy task keys.
-
-    Args:
-        data: Dictionary payload being validated or migrated.
-    """
-    tasks = data.get(_TASKS_KEY) or []
-    if not isinstance(tasks, list):
-        raise ValueError("Objective field `tasks` must be a list")
-    for idx, task in enumerate(tasks):
-        if not isinstance(task, dict):
-            raise ValueError(f"{_TASKS_KEY}[{idx}] must be a mapping")
-        legacy = sorted(_LEGACY_TASK_KEYS.intersection(task.keys()))
-        if legacy:
-            raise ValueError(
-                "Legacy task keys are not supported in runtime parsing: "
-                f"{_TASKS_KEY}[{idx}] has {legacy}. Migrate first with `{_MIGRATE_HINT}`."
-            )
 
 
 def _validate_train_eval_entries(eval_entries: list[dict], owner: str) -> None:
@@ -109,15 +113,20 @@ def _validate_train_eval_entries(eval_entries: list[dict], owner: str) -> None:
             raise ValueError(f"{owner}[{idx}] does not support raw")
         if "input" not in item or "output" not in item:
             raise ValueError(f"{owner}[{idx}] must contain both input and output")
-        if not isinstance(item["input"], str) or not isinstance(item["output"], str):
-            raise ValueError(f"{owner}[{idx}] input/output must be strings")
+        for field in ("input", "output"):
+            val = item[field]
+            if not isinstance(val, str):
+                raise ValueError(
+                    f"{owner}[{idx}] {field} must be a string, "
+                    f"got {type(val).__name__}({val!r}) — wrap in quotes"
+                )
 
 
 def _assert_valid_eval_entries(data: dict) -> None:
     """assert valid eval entries.
 
     Args:
-        data: Dictionary payload being validated or migrated.
+        data: Dictionary payload being validated.
     """
     train_evals = data.get(TRAIN_EVALS_KEY) or []
     holdout_evals = data.get(HOLDOUT_EVALS_KEY) or []
@@ -131,24 +140,12 @@ def _assert_valid_eval_entries(data: dict) -> None:
         validate_holdout_eval_entries(task_holdout, f"{_TASKS_KEY}[{idx}].{HOLDOUT_EVALS_KEY}")
 
 
-def _migrate_constraint_profile_field(data: dict) -> None:
-    """Map legacy ``constraint_profile`` to ``tests_constraint_profile`` in-place.
-
-    Args:
-        data: Dictionary payload being validated or migrated.
-    """
-    if _LEGACY_CONSTRAINT_PROFILE_KEY in data:
-        data.setdefault(_TESTS_CONSTRAINT_PROFILE_KEY, data.pop(_LEGACY_CONSTRAINT_PROFILE_KEY))
-    for task in data.get(_TASKS_KEY) or []:
-        if isinstance(task, dict) and _LEGACY_CONSTRAINT_PROFILE_KEY in task:
-            task.setdefault(_TESTS_CONSTRAINT_PROFILE_KEY, task.pop(_LEGACY_CONSTRAINT_PROFILE_KEY))
-
 
 def _assert_valid_objective_shape(data: dict) -> None:
     """assert valid objective shape.
 
     Args:
-        data: Dictionary payload being validated or migrated.
+        data: Dictionary payload being validated.
     """
     raw_granularity = data.get("verification_granularity")
     if raw_granularity is not None and raw_granularity not in {"task", "objective"}:
@@ -239,3 +236,37 @@ def _validate_target_files(target_files: object, owner: str) -> None:
             raise ValueError(f"{owner}[{idx}] must not contain '.' or '..' path segments")
         if path.suffix != ".py":
             raise ValueError(f"{owner}[{idx}] must point to a .py file")
+
+
+def review_objective_semantics(
+    objective: ParsedObjective,
+    agent: str,
+    model: str,
+    budget: float,
+) -> list[dict]:
+    """Ask an LLM to verify eval expected values against the objective description.
+
+    Args:
+        objective: Parsed objective to review.
+        agent: Agent binary name (e.g. "claude").
+        model: Model identifier to use.
+        budget: Max budget in USD for the agent call.
+
+    Returns:
+        List of issue dicts, each with keys: severity, eval_type, task,
+        case_index, input, expected, explanation.
+    """
+    all_tasks = list(objective.tasks) if objective.tasks else []
+    if not all_tasks:
+        all_tasks = [objective]
+
+    prompt = render("validate.jinja2", objective=objective, all_tasks=all_tasks)
+    result = run_cli_agent(prompt, agent, model, budget)
+
+    if result.exit_code != 0:
+        raise RuntimeError(f"Validation agent failed: {result.stderr}")
+
+    parsed = repair_json(result.stdout, return_objects=True)
+    if isinstance(parsed, dict) and "issues" in parsed:
+        return parsed["issues"]
+    return []

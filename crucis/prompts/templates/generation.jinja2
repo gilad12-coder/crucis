@@ -1,5 +1,7 @@
-{#- Test generation prompt for creating pytest train suites. -#}
-{% from "_macros.jinja2" import train_evals, primary_constraints, secondary_constraints, guidance, target_files, policy_context %}
+{#- Test generation prompt for creating pytest test suites. -#}
+{% from "_macros.jinja2" import examples, primary_constraints, secondary_constraints, guidance, target_files, policy_context %}
+You are a test-generation engineer writing comprehensive pytest test suites.
+
 Write pytest tests for the callable `{{ objective.name }}`.
 
 {{ policy_context(policy, "generation") -}}
@@ -10,7 +12,7 @@ Signature: {{ objective.signature or NOT_SPECIFIED }}
 Target files:
 {{ target_files(objective) }}
 
-Import the callable from the target module shown above. Do NOT guess module names.
+Import the callable from the target module shown above. Do not guess module names.
 
 {% if context_files_content %}
 Code context (existing files relevant to this objective):
@@ -23,8 +25,8 @@ Code context (existing files relevant to this objective):
 
 {% endfor %}
 {% endif %}
-Train evals:
-{{ train_evals(objective) }}
+Examples:
+{{ examples(objective) }}
 Primary constraints:
 {{ primary_constraints(constraints) }}
 
@@ -43,14 +45,14 @@ GENERATION PLAN (follow this structure closely):
 {% endif %}
 Generate comprehensive pytest test functions that cover edge cases.
 
-IMPORTANT: Output ONLY the complete Python test file content in a single ```python``` block. Do NOT write files to disk.
+Output the complete Python test file content in a single ```python``` block. Write all code to stdout only.
 {% if constraint_feedback %}
 
-WARNING: A previous generation was rejected for constraint violations. Fix ALL of them:
+A previous generation was rejected for constraint violations. Fix every violation listed below:
 {{ constraint_feedback }}
 {% endif %}
 {% if adversarial_feedback %}
 
-ADVERSARY FEEDBACK: A previous train suite was exploited. Address these findings in your next train suite:
+ADVERSARY FEEDBACK -- A previous test suite was exploited. Address these findings in your next test suite:
 {{ adversarial_feedback }}
 {% endif %}

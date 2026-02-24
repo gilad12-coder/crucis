@@ -1,1 +1,1 @@
-"""Objective parsing and schema migration."""
+"""Objective parsing and validation."""

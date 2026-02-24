@@ -3,7 +3,6 @@
 import argparse
 import json
 import sys
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,24 +13,30 @@ from crucis.core.planner import build_generation_plan, write_plan_to_workspace
 from crucis.defaults import DEFAULT_CHECKPOINT_PATH, DEFAULT_PROFILES_PATH
 from crucis.diagnostics import collect_preflight_checks, doctor_report_payload, run_doctor
 from crucis.display import (
+    configure_console,
     display_adversarial_report,
+    display_agent_boundary,
     display_checkpoint_table,
+    display_doctor_report,
     display_error,
-    display_evaluation_result,
     display_fit_complete,
     display_hardening_cycle,
+    display_info,
     display_sandbox_status,
+    display_success,
     display_task_header,
-    display_train_suite_source,
+    display_test_suite_source,
+    display_validation_report,
+    display_warning,
     display_workspace,
+    prompt_input,
 )
-from crucis.models import AdversarialReport
+from crucis.models import AdversarialReport, TrainingStatus
 from crucis.execution.optimizer import run_optimizer_worker
 from crucis.execution.sandbox import check_docker_available
-from crucis.intake.migration import migrate_checkpoint_file, migrate_objective_file
-from crucis.intake.objective import parse_objective
-from crucis.intake.scaffold import scaffold_workspace
-from crucis.persistence.checkpoint import load_checkpoint
+from crucis.intake.objective import parse_objective, review_objective_semantics
+from crucis.intake.scaffold import detect_existing_codebase, scaffold_workspace
+from crucis.persistence.checkpoint import load_checkpoint, save_checkpoint
 from crucis.persistence.policy import (
     OptimizerState,
     OptimizerStatus,
@@ -41,7 +46,11 @@ from crucis.persistence.policy import (
     save_active_policy,
     save_optimizer_status,
 )
-from crucis.persistence.settings import apply_agent_settings_to_env, load_runtime_settings
+from crucis.persistence.settings import (
+    apply_agent_settings_to_env,
+    load_runtime_settings,
+    try_load_runtime_settings,
+)
 
 _STORE_TRUE = "store_true"
 _WORKSPACE_FLAG = "--workspace"
@@ -50,34 +59,22 @@ _OBJECTIVE_FLAG = "--objective"
 _PROFILES_FLAG = "--profiles"
 _JSON_OPTION = "--json"
 _JSON_ATTR = "json"
+_WORKSPACE_ATTR = "workspace"
 _OBJECTIVE_POS = "objective_path"
 _OBJECTIVE_POS_HELP = "Path to objective YAML file"
 _CHECKPOINT_HELP = "Path to checkpoint file (default: .checkpoint.json)"
-_NO_CHECKPOINT_HINT = "Run `crucis fit <objective.yaml>` first to generate test suites."
-_MAX_PROFILE_KEYS_SHOWN = 3
+_NO_CHECKPOINT_HINT = "Run `crucis run` first to generate test suites."
+_HINT_INIT_OR_CHECK_PATH = "Check the path or run 'crucis init' to create one."
 _JOIN_SEP = ", "
 _TASKS_ATTR = "tasks"
 _PROFILES_ATTR = "profiles"
-_TRAIN_EVALS_KEY = "train_evals"
 _TASK_FLAG = "--task"
-_TEXT_ENCODING = "utf-8"
+_DRY_RUN_ATTR = "dry_run"
 _JSON_HELP = "Print machine-readable JSON output"
-_EVALUATE_CMD = "evaluate"
+_SEVERITY_KEY = "severity"
+_SEVERITY_ERROR = "error"
 
-_LEGACY_COMMANDS = {
-    "run": "fit",
-    "implement": _EVALUATE_CMD,
-    "status": "checkpoint",
-    "preview": "fit <objective.yaml> --dry-run",
-}
 
-_LEGACY_FLAGS = {
-    "--session": "--checkpoint",
-    "--implement": "--evaluate",
-    "--auto-critique": "--auto-adversary",
-    "--no-docker": "--no-sandbox",
-    "--spec": "--objective",
-}
 
 
 def _get_version() -> str:
@@ -96,6 +93,9 @@ def _get_version() -> str:
 
 _PROFILES_HELP = "Path to constraint profiles YAML (default: constraints/profiles.yaml)"
 _WORKSPACE_HELP = "Workspace directory root"
+_WORKSPACE_ARTIFACTS_HELP = "Workspace directory for artifacts (default: objective file's parent)"
+_RESET_TASKS_DEST = "reset_tasks"
+_ACTION_APPEND = "append"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,20 +115,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"%(prog)s {_get_version()}",
     )
+    color_group = parser.add_mutually_exclusive_group()
+    color_group.add_argument("--color", action=_STORE_TRUE, help="Force colored output")
+    color_group.add_argument("--no-color", action=_STORE_TRUE, help="Disable colored output")
+    verbosity_group = parser.add_mutually_exclusive_group()
+    verbosity_group.add_argument(
+        "--verbose", action=_STORE_TRUE, help="Show all diagnostic details"
+    )
+    verbosity_group.add_argument(
+        "--quiet", action=_STORE_TRUE, help="Suppress informational output"
+    )
     subs = parser.add_subparsers(dest="command", required=True)
     _add_init_parser(subs)
-    _add_plan_parser(subs)
-    _add_fit_parser(subs)
-    _add_evaluate_parser(subs)
-    _add_checkpoint_parser(subs)
-    _add_show_parser(subs)
-    _add_add_task_parser(subs)
-    _add_add_eval_parser(subs)
+    _add_run_parser(subs)
+    _add_status_parser(subs)
     _add_validate_parser(subs)
-    _add_profiles_parser(subs)
     _add_doctor_parser(subs)
     _add_optimizer_worker_parser(subs)
-    _add_migrate_parser(subs)
     _add_promote_parser(subs)
     return parser
 
@@ -142,8 +145,8 @@ def _add_init_parser(subs) -> None:
     p = subs.add_parser(
         "init",
         help="Scaffold a new Crucis workspace",
-        description="Create starter objective.yaml, constraints/profiles.yaml, "
-        "and .crucis/settings.yaml in the target directory. "
+        description="Requires Python 3.10+ (3.12+ recommended). Create starter workspace files "
+        "(objective.yaml, constraints/profiles.yaml, .crucis/settings.yaml). "
         "By default, an AI agent interviews you about your project.",
     )
     p.add_argument("--name", default="my_project", help="Project name for the objective template")
@@ -168,50 +171,29 @@ def _add_init_parser(subs) -> None:
         action=_STORE_TRUE,
         help="Fail init when agent onboarding cannot run or does not complete",
     )
-
-
-def _add_plan_parser(subs) -> None:
-    """Add the plan subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "plan",
-        help="Generate a structured plan.md for test-suite generation",
-        description="Analyze an objective and its constraints, then call an agent "
-        "to write a detailed generation plan that guides test-suite creation.",
-    )
-    p.add_argument(_OBJECTIVE_POS, help="Path to objective YAML")
     p.add_argument(
-        _PROFILES_FLAG,
-        default=DEFAULT_PROFILES_PATH,
-        help=_PROFILES_HELP,
-    )
-    p.add_argument(
-        _WORKSPACE_FLAG,
-        default=None,
-        help="Workspace directory (default: objective file's parent)",
-    )
-    p.add_argument(
-        "--force",
+        "--existing-codebase",
         action=_STORE_TRUE,
-        help="Regenerate plan.md even if it already exists",
+        help=(
+            "Treat workspace as an existing codebase (skip src/solution.py scaffolding). "
+            "By default this is auto-detected when Python files already exist."
+        ),
     )
+    p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
 
-def _add_fit_parser(subs) -> None:
-    """Add the fit subcommand to the parser.
+def _add_run_parser(subs) -> None:
+    """Add the run subcommand to the parser.
 
     Args:
         subs: Subparsers action from the parent parser.
     """
     p = subs.add_parser(
-        "fit",
-        help="Generate and harden test suites for an objective",
-        description="Generate pytest train suites, validate against constraints, "
-        "run adversarial review, and save progress to a checkpoint. "
-        "Use --task to process specific tasks (e.g. --task foo --task bar).",
+        "run",
+        help="Run the full pipeline: generate test suites, harden, and implement",
+        description="Generate test suites, run adversarial review, and implement code. "
+        "Auto-finds objective.yaml in the current directory if not specified. "
+        "By default, approves everything and runs the full pipeline.",
     )
     p.add_argument(_OBJECTIVE_POS, nargs="?", default=None, help=_OBJECTIVE_POS_HELP)
     p.add_argument(
@@ -230,28 +212,32 @@ def _add_fit_parser(subs) -> None:
         help=_CHECKPOINT_HELP,
     )
     p.add_argument(
-        "-y",
-        "--auto",
-        action=_STORE_TRUE,
-        help="Auto-accept tests and adversarial review (no interactive prompts)",
-    )
-    p.add_argument(
-        "--auto-tests",
-        action=_STORE_TRUE,
-        help="Auto-approve generated train suites (skip the approve/edit/reject prompt)",
-    )
-    p.add_argument(
-        "--auto-adversary",
-        action=_STORE_TRUE,
-        help="Auto-accept adversarial report (skip the improve/done prompt)",
-    )
-    p.add_argument(
-        "--evaluate", action=_STORE_TRUE, help="Automatically run evaluation after fit completes"
-    )
-    p.add_argument(
         _WORKSPACE_FLAG,
         default=None,
-        help="Workspace directory for artifacts (default: objective file's parent)",
+        help=_WORKSPACE_ARTIFACTS_HELP,
+    )
+    p.add_argument(
+        _TASK_FLAG,
+        action=_ACTION_APPEND,
+        dest=_TASKS_ATTR,
+        help="Process only named task(s); repeatable",
+    )
+    p.add_argument(
+        "--reset",
+        action=_STORE_TRUE,
+        help="Clear checkpoint state before starting (fresh run)",
+    )
+    p.add_argument(
+        "--reset-task",
+        action=_ACTION_APPEND,
+        dest=_RESET_TASKS_DEST,
+        help="Clear only named task(s) from checkpoint; repeatable",
+    )
+    p.add_argument(
+        "--no-sandbox", action=_STORE_TRUE, help="Run pytest on host instead of Docker sandbox"
+    )
+    p.add_argument(
+        "-y", "--yes", action=_STORE_TRUE, help="Skip confirmation prompts (e.g. --reset)"
     )
     p.add_argument(
         "--dry-run",
@@ -259,65 +245,39 @@ def _add_fit_parser(subs) -> None:
         help="Display generation prompts without calling agents",
     )
     p.add_argument(
-        _TASK_FLAG,
-        action="append",
-        dest=_TASKS_ATTR,
-        help="Process only named task(s); repeatable (e.g. --task foo --task bar)",
-    )
-    p.add_argument(
         "--demo",
         action=_STORE_TRUE,
-        help="Simulate the fit workflow with canned data (no API key required)",
+        help="Simulate the workflow with canned data (no API key required)",
+    )
+    p.add_argument(
+        "--plan",
+        action=_STORE_TRUE,
+        help="Generate a structured plan.md instead of running the pipeline",
+    )
+    p.add_argument(
+        "--force-plan",
+        action=_STORE_TRUE,
+        help="Regenerate plan.md even if it already exists (use with --plan)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Override agent subprocess timeout (default: 300s)",
     )
 
 
-def _add_evaluate_parser(subs) -> None:
-    """Add the evaluate subcommand to the parser.
+def _add_status_parser(subs) -> None:
+    """Add the status subcommand to the parser.
 
     Args:
         subs: Subparsers action from the parent parser.
     """
     p = subs.add_parser(
-        "evaluate",
-        help="Implement code from a checkpoint and verify against tests",
-        description="Load a checkpoint, send a curriculum to the implementation agent, "
-        "and verify the result against train suites and hidden holdout evals.",
-    )
-    p.add_argument(_OBJECTIVE_POS, nargs="?", default=None, help=_OBJECTIVE_POS_HELP)
-    p.add_argument(
-        _OBJECTIVE_FLAG,
-        default=None,
-        help="Path to objective YAML (alternative to positional argument)",
-    )
-    p.add_argument(
-        _PROFILES_FLAG,
-        default=DEFAULT_PROFILES_PATH,
-        help=_PROFILES_HELP,
-    )
-    p.add_argument(
-        _CHECKPOINT_FLAG,
-        default=DEFAULT_CHECKPOINT_PATH,
-        help=_CHECKPOINT_HELP,
-    )
-    p.add_argument(
-        "--no-sandbox", action=_STORE_TRUE, help="Run pytest on host instead of Docker sandbox"
-    )
-    p.add_argument(
-        _WORKSPACE_FLAG,
-        default=None,
-        help="Workspace directory for artifacts (default: objective file's parent)",
-    )
-
-
-def _add_checkpoint_parser(subs) -> None:
-    """Add the checkpoint subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "checkpoint",
-        help="Show checkpoint progress and optimizer status",
+        "status",
+        aliases=["summary"],
+        help="Show progress and optimizer status",
         description="Display a table of per-task progress and background optimizer state.",
     )
     p.add_argument(
@@ -333,62 +293,9 @@ def _add_checkpoint_parser(subs) -> None:
     p.add_argument(
         _JSON_OPTION,
         action=_STORE_TRUE,
-        help="Print machine-readable checkpoint status JSON",
+        help="Print machine-readable progress JSON",
     )
     p.add_argument(_WORKSPACE_FLAG, default=None, help=_WORKSPACE_HELP)
-
-
-def _add_show_parser(subs) -> None:
-    """Add the show subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "show",
-        help="Show generated test suite and adversarial report for a task",
-        description="Display the train suite source and adversarial report for a "
-        "specific task from the checkpoint. Shortcut for `crucis checkpoint --task`.",
-    )
-    p.add_argument("task_name", help="Task name to inspect")
-    p.add_argument(_CHECKPOINT_FLAG, default=DEFAULT_CHECKPOINT_PATH, help=_CHECKPOINT_HELP)
-    p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
-    p.add_argument(_WORKSPACE_FLAG, default=None, help=_WORKSPACE_HELP)
-
-
-def _add_add_task_parser(subs) -> None:
-    """Add the add-task subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "add-task",
-        help="Add a task to an objective file",
-        description="Append a new task entry to an existing objective YAML file.",
-    )
-    p.add_argument(_OBJECTIVE_POS, help=_OBJECTIVE_POS_HELP)
-    p.add_argument("--name", required=True, help="Task name (must be a valid Python identifier)")
-    p.add_argument("--description", default=None, help="Task description")
-    p.add_argument("--signature", default=None, help="Function signature hint")
-
-
-def _add_add_eval_parser(subs) -> None:
-    """Add the add-eval subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "add-eval",
-        help="Add a train eval to an objective file",
-        description="Append a train_evals entry to an objective file, "
-        "either at the top level or to a specific task.",
-    )
-    p.add_argument(_OBJECTIVE_POS, help=_OBJECTIVE_POS_HELP)
-    p.add_argument(_TASK_FLAG, default=None, help="Task name to add eval to (default: top-level)")
-    p.add_argument("--input", required=True, dest="eval_input", help="Eval input expression")
-    p.add_argument("--output", required=True, dest="eval_output", help="Expected output expression")
 
 
 def _add_validate_parser(subs) -> None:
@@ -408,25 +315,18 @@ def _add_validate_parser(subs) -> None:
         default=None,
         help="Optional profiles file to validate against",
     )
-
-
-def _add_profiles_parser(subs) -> None:
-    """Add the profiles subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "profiles",
-        help="List available constraint profiles",
-        description="Load and display all named profiles from a constraint profiles YAML file.",
+    p.add_argument(
+        _WORKSPACE_FLAG,
+        default=None,
+        help="Workspace directory for resolving relative paths",
     )
     p.add_argument(
-        _PROFILES_FLAG,
-        default=DEFAULT_PROFILES_PATH,
-        help=_PROFILES_HELP,
+        "--static",
+        action="store_true",
+        default=False,
+        help="Run only structural checks (skip LLM semantic review)",
     )
-    p.add_argument(_WORKSPACE_FLAG, default=".", help=_WORKSPACE_HELP)
+    p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
 
 def _add_doctor_parser(subs) -> None:
@@ -449,6 +349,11 @@ def _add_doctor_parser(subs) -> None:
         action=_STORE_TRUE,
         help="Fail diagnostics when Docker sandbox is unavailable",
     )
+    p.add_argument(
+        "-v", "--verbose",
+        action=_STORE_TRUE,
+        help="Show all checks including passing ones (default: only warnings/failures)",
+    )
     p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
 
@@ -460,7 +365,7 @@ def _add_optimizer_worker_parser(subs) -> None:
     """
     p = subs.add_parser(
         "optimizer-worker",
-        help="Run background optimizer worker in foreground",
+        help=argparse.SUPPRESS,
         description="Run one queued optimizer drain pass by default, or continuous loop mode.",
     )
     p.add_argument(_WORKSPACE_FLAG, default=".", help=_WORKSPACE_HELP)
@@ -471,23 +376,6 @@ def _add_optimizer_worker_parser(subs) -> None:
     )
     p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
-
-def _add_migrate_parser(subs) -> None:
-    """Add the migrate subcommand to the parser.
-
-    Args:
-        subs: Subparsers action from the parent parser.
-    """
-    p = subs.add_parser(
-        "migrate",
-        help="Convert legacy objective/checkpoint files to current schema",
-        description="Migrate old spec.yaml or .session.json files to the current "
-        "objective.yaml and .checkpoint.json formats.",
-    )
-    p.add_argument("--objective-in", help="Legacy objective file to read")
-    p.add_argument("--objective-out", help="New objective file to write")
-    p.add_argument("--checkpoint-in", help="Legacy checkpoint file to read")
-    p.add_argument("--checkpoint-out", help="New checkpoint file to write")
 
 
 def _add_promote_parser(subs) -> None:
@@ -509,6 +397,7 @@ def _add_promote_parser(subs) -> None:
         action=_STORE_TRUE,
         help="Promote even when candidate-ready metadata is missing or mismatched",
     )
+    p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
 
 def show_checkpoint(checkpoint_path: Path, as_json: bool = False) -> None:
@@ -567,11 +456,11 @@ def _show_task_detail(checkpoint_path: Path, task_name: str, as_json: bool = Fal
                 print(json.dumps(payload, indent=2))
             else:
                 if progress.train_suite_source:
-                    display_train_suite_source(progress.train_suite_source)
+                    display_test_suite_source(progress.train_suite_source)
                 if progress.adversarial_report:
                     display_adversarial_report(progress.adversarial_report)
                 if not progress.train_suite_source and not progress.adversarial_report:
-                    print(f"Task '{task_name}' has no generated data yet.")
+                    display_info(f"Task '{task_name}' has no generated data yet.")
             return
 
     display_error(f"Task '{task_name}' not found in checkpoint.")
@@ -579,29 +468,24 @@ def _show_task_detail(checkpoint_path: Path, task_name: str, as_json: bool = Fal
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse CLI args and dispatch to fit/evaluate/checkpoint/migrate.
+    """Parse CLI args and dispatch to the appropriate command handler.
 
     Args:
         argv: Optional CLI arguments; defaults to process arguments when None.
     """
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    _fail_on_legacy_usage(raw_args)
-
     args = build_parser().parse_args(raw_args)
+    configure_console(
+        no_color=bool(getattr(args, "no_color", False)),
+        force_color=bool(getattr(args, "color", False)),
+    )
     handlers = {
         "init": run_init_command,
-        "plan": run_plan_command,
-        "fit": _handle_fit_command,
-        "show": run_show_command,
-        "add-task": run_add_task_command,
-        "add-eval": run_add_eval_command,
-        _EVALUATE_CMD: _handle_evaluate_command,
-        "checkpoint": _handle_checkpoint_command,
+        "run": _handle_run_command,
+        "status": _handle_status_command,
         "validate": run_validate_command,
-        "profiles": run_profiles_command,
         "doctor": run_doctor_command,
         "optimizer-worker": run_optimizer_worker_command,
-        "migrate": run_migrate,
         "promote": run_promote,
     }
     handler = handlers.get(args.command)
@@ -633,11 +517,22 @@ def _resolve_objective_path(
         raise SystemExit(2)
     raw_path = positional or flag
     if not raw_path:
-        display_error(f"No objective file specified. Usage: crucis {command} <objective.yaml>")
-        raise SystemExit(2)
+        default_objective = Path.cwd() / "objective.yaml"
+        if default_objective.exists():
+            raw_path = str(default_objective)
+        else:
+            display_error(
+                f"No objective file specified and no objective.yaml in current directory. "
+                f"Usage: crucis {command} <objective.yaml>",
+                hint=_HINT_INIT_OR_CHECK_PATH,
+            )
+            raise SystemExit(2)
     objective_path = Path(raw_path)
     if check_exists and not objective_path.exists():
-        display_error(f"Objective file not found: {objective_path}")
+        display_error(
+            f"Objective file not found: {objective_path}",
+            hint=_HINT_INIT_OR_CHECK_PATH,
+        )
         raise SystemExit(1)
     return objective_path
 
@@ -659,6 +554,7 @@ _DEMO_REPORT = AdversarialReport(
     attack_vectors=["hardcoded return value", "swapped argument order"],
     generalization_gaps=["large integers", "floating-point inputs"],
     suggested_probe_tests=["test with float args", "test commutativity"],
+    correctness_issues=[],
 )
 
 
@@ -677,12 +573,12 @@ def _run_demo_fit(
     objective = parse_objective(objective_path)
     tasks = objective.tasks or [objective]
     display_workspace(workspace)
-    print("[demo mode — no agents will be called]\n")
+    display_info("[demo mode — no agents will be called]\n")
 
     progress_list = []
     for idx, task in enumerate(tasks, 1):
         display_task_header(task.name, index=idx, total=len(tasks))
-        display_train_suite_source(_DEMO_TEST)
+        display_test_suite_source(_DEMO_TEST)
         display_hardening_cycle(task.name, 1, 1)
         display_adversarial_report(_DEMO_REPORT)
         progress_list.append(
@@ -690,8 +586,134 @@ def _run_demo_fit(
         )
 
     state = CheckpointState(task_progress=progress_list)
-    display_fit_complete(state, objective_path=str(objective_path))
-    print("Demo complete — no agents were called. Remove --demo to run for real.")
+    display_fit_complete(state)
+    display_success("Demo complete — no agents were called. Remove --demo to run for real.")
+
+
+def _apply_reset(
+    checkpoint_path: Path,
+    reset_all: bool,
+    reset_tasks: list[str],
+    skip_confirm: bool = False,
+) -> None:
+    """Apply checkpoint reset before a fit run.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file.
+        reset_all: When True, delete the entire checkpoint.
+        reset_tasks: Task names to reset individually.
+        skip_confirm: When True, skip interactive confirmation prompt.
+    """
+    if reset_all:
+        if checkpoint_path.exists():
+            if not skip_confirm and _is_interactive_terminal():
+                answer = prompt_input("[bold yellow]This will delete the checkpoint.[/bold yellow] Continue? [y/N] ").lower()
+                if answer not in ("y", "yes"):
+                    display_info("Reset cancelled.")
+                    return
+            checkpoint_path.unlink()
+            display_info("Checkpoint cleared.")
+        return
+    if not reset_tasks or not checkpoint_path.exists():
+        return
+    state = load_checkpoint(checkpoint_path)
+    if state is None:
+        return
+    for task in state.task_progress:
+        if task.name in reset_tasks:
+            task.status = TrainingStatus.pending
+            task.train_suite_source = None
+            task.adversarial_report = None
+    save_checkpoint(state, checkpoint_path)
+    display_info(f"Reset task(s): {', '.join(reset_tasks)}")
+
+
+def _fit_preflight(
+    config: Config,
+    effective_workspace: Path,
+    auto_evaluate: bool,
+) -> None:
+    """Run fail-fast preflight checks for fit command.
+
+    Args:
+        config: Runtime configuration values.
+        effective_workspace: Resolved workspace directory.
+        auto_evaluate: Whether evaluation auto-runs after fit.
+    """
+    require_pytest = auto_evaluate and not check_docker_available()
+    required_agents = {config.generation_agent, config.critic_agent}
+    if auto_evaluate:
+        required_agents.add(config.implementation_agent)
+    _run_preflight_or_exit(
+        workspace=effective_workspace,
+        config=config,
+        required_agents=required_agents,
+        require_pytest=require_pytest,
+    )
+
+
+def _auto_clear_empty_checkpoint(checkpoint_path: Path) -> None:
+    """Silently remove a checkpoint where all tasks are still pending.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file.
+    """
+    if not checkpoint_path.exists():
+        return
+    state = load_checkpoint(checkpoint_path)
+    if state is None:
+        return
+    if all(t.status == TrainingStatus.pending for t in state.task_progress):
+        checkpoint_path.unlink()
+
+
+def _resolve_fit_reset(args: argparse.Namespace, checkpoint_path: Path) -> list[str] | None:
+    """Validate and apply reset flags, returning resolved task_names.
+
+    Args:
+        args: Parsed CLI arguments object.
+        checkpoint_path: Path to the checkpoint file.
+
+    Returns:
+        Task names to process, or None for all tasks.
+    """
+    _auto_clear_empty_checkpoint(checkpoint_path)
+    reset_all = bool(getattr(args, "reset", False))
+    reset_tasks = getattr(args, "reset_tasks", None) or []
+    if reset_all and reset_tasks:
+        display_error(
+            "Cannot use --reset together with --reset-task.",
+            hint="Use only one of these flags.",
+        )
+        raise SystemExit(2)
+    skip_confirm = bool(getattr(args, "yes", False))
+    _apply_reset(checkpoint_path, reset_all, reset_tasks, skip_confirm=skip_confirm)
+    task_names = getattr(args, _TASKS_ATTR, None)
+    if reset_tasks and not task_names:
+        task_names = list(reset_tasks)
+    return task_names
+
+
+def _handle_run_command(args: argparse.Namespace) -> None:
+    """Execute the unified run pipeline.
+
+    Handles three modes:
+    - ``--plan``: generate a structured plan.md
+    - ``--dry-run``: preview generation prompts without calling agents
+    - Default: full pipeline (fit + evaluate), auto-approve everything
+
+    Args:
+        args: Parsed CLI arguments object.
+    """
+    if bool(getattr(args, "plan", False)):
+        _handle_run_plan(args)
+        return
+
+    args.auto = True
+    args.auto_tests = True
+    args.auto_adversary = True
+    args.evaluate = not bool(getattr(args, _DRY_RUN_ATTR, False))
+    _handle_fit_command(args)
 
 
 def _handle_fit_command(args: argparse.Namespace) -> None:
@@ -700,8 +722,9 @@ def _handle_fit_command(args: argparse.Namespace) -> None:
     Args:
         args: Parsed CLI arguments object.
     """
-    objective_path = _resolve_objective_path(args, "fit", check_exists=True)
-    workspace = Path(args.workspace).resolve() if args.workspace else None
+    objective_path = _resolve_objective_path(args, "run", check_exists=True)
+    ws_arg = getattr(args, _WORKSPACE_ATTR, None)
+    workspace = Path(ws_arg).resolve() if ws_arg else None
     effective_workspace = workspace or objective_path.parent
     _ensure_runtime_settings(effective_workspace)
 
@@ -709,38 +732,35 @@ def _handle_fit_command(args: argparse.Namespace) -> None:
         _run_demo_fit(objective_path, Path(args.profiles), effective_workspace)
         return
 
-    dry_run = bool(getattr(args, "dry_run", False))
+    dry_run = bool(getattr(args, _DRY_RUN_ATTR, False))
     config = Config()
+    auto_evaluate = bool(getattr(args, "evaluate", False)) if not dry_run else False
     if not dry_run:
-        auto_evaluate = bool(getattr(args, "evaluate", False))
-        require_pytest = auto_evaluate and not check_docker_available()
-        required_agents = {config.generation_agent, config.critic_agent}
-        if auto_evaluate:
-            required_agents.add(config.implementation_agent)
-        _run_preflight_or_exit(
-            workspace=effective_workspace,
-            config=config,
-            required_agents=required_agents,
-            require_pytest=require_pytest,
-        )
-    else:
-        auto_evaluate = False
+        _fit_preflight(config, effective_workspace, auto_evaluate)
+
+    checkpoint_path = Path(args.checkpoint)
+    if not checkpoint_path.is_absolute():
+        checkpoint_path = effective_workspace / checkpoint_path
+    task_names = _resolve_fit_reset(args, checkpoint_path)
 
     auto_all = bool(getattr(args, "auto", False))
     fit_kwargs: dict = dict(
         objective_path=objective_path,
         profiles_path=Path(args.profiles),
-        checkpoint_path=Path(args.checkpoint),
+        checkpoint_path=checkpoint_path,
         auto_tests=auto_all or bool(getattr(args, "auto_tests", False)),
         auto_adversary=auto_all or bool(getattr(args, "auto_adversary", False)),
         auto_evaluate=auto_evaluate,
         workspace=workspace,
+        no_sandbox=bool(getattr(args, "no_sandbox", False)),
     )
     if dry_run:
-        fit_kwargs["dry_run"] = True
-    task_names = getattr(args, _TASKS_ATTR, None)
+        fit_kwargs[_DRY_RUN_ATTR] = True
     if task_names:
         fit_kwargs["task_names"] = task_names
+    agent_timeout = getattr(args, "timeout", None)
+    if agent_timeout is not None:
+        fit_kwargs["agent_timeout"] = agent_timeout
     try:
         run_fit(**fit_kwargs)
     except (ValueError, RuntimeError) as exc:
@@ -748,43 +768,53 @@ def _handle_fit_command(args: argparse.Namespace) -> None:
         raise SystemExit(1) from exc
 
 
-def _handle_evaluate_command(args: argparse.Namespace) -> None:
-    """Execute evaluate command preflight and dispatch.
+def _handle_run_plan(args: argparse.Namespace) -> None:
+    """Handle ``run --plan`` by generating a structured plan.md.
 
     Args:
         args: Parsed CLI arguments object.
     """
-    objective_path = _resolve_objective_path(args, _EVALUATE_CMD)
-    eval_workspace = Path(args.workspace).resolve() if args.workspace else None
-    effective_workspace = eval_workspace or objective_path.parent
-    _ensure_runtime_settings(effective_workspace)
-    use_sandbox = not bool(getattr(args, "no_sandbox", False))
+    objective_path = _resolve_objective_path(args, "run --plan", check_exists=True)
+    ws_arg = getattr(args, _WORKSPACE_ATTR, None)
+    workspace = Path(ws_arg).resolve() if ws_arg else objective_path.parent
+    _ensure_runtime_settings(workspace)
+
+    plan_path = workspace / "plan.md"
+    force = bool(getattr(args, "force_plan", False))
+    if plan_path.exists() and not force:
+        display_error(f"Plan already exists at {plan_path}. Use --force-plan to regenerate.")
+        raise SystemExit(1)
+
+    objective = parse_objective(objective_path)
+    profiles = load_profiles(_resolve_plan_profiles(workspace, Path(args.profiles)))
+    effective_tasks = objective.tasks or [objective]
+    constraints_map = {
+        task.name: resolve_constraints(objective, profiles, task.name) for task in effective_tasks
+    }
+
     config = Config()
-    _run_preflight_or_exit(
-        workspace=effective_workspace,
-        config=config,
-        required_agents={config.implementation_agent},
-        require_pytest=not use_sandbox or (use_sandbox and not check_docker_available()),
-    )
-    run_evaluate(
-        objective_path=objective_path,
-        profiles_path=Path(args.profiles),
-        checkpoint_path=Path(args.checkpoint),
-        use_sandbox=use_sandbox,
-        workspace=eval_workspace,
-    )
+    model_label = config.generation_model or "default model"
+    display_info(f"Generating plan with {config.generation_agent} ({model_label})...")
+    try:
+        plan_content = build_generation_plan(objective, constraints_map, config)
+    except (RuntimeError, ValueError) as exc:
+        display_error(str(exc), hint="Verify agent availability with 'crucis doctor'.")
+        raise SystemExit(1) from exc
+    created = write_plan_to_workspace(plan_content, workspace)
+    display_success(f"  Created: {created}")
+    display_info("\nRun `crucis run` to use this plan during generation.")
 
 
-def _handle_checkpoint_command(args: argparse.Namespace) -> None:
-    """Execute checkpoint display command.
+def _handle_status_command(args: argparse.Namespace) -> None:
+    """Execute summary display command.
 
     Args:
         args: Parsed CLI arguments object.
     """
     checkpoint_path = Path(args.checkpoint)
-    workspace = getattr(args, "workspace", None)
-    if workspace and not checkpoint_path.is_absolute():
-        checkpoint_path = Path(workspace).resolve() / checkpoint_path
+    ws_arg = getattr(args, _WORKSPACE_ATTR, None)
+    if ws_arg and not checkpoint_path.is_absolute():
+        checkpoint_path = Path(ws_arg).resolve() / checkpoint_path
     task_name = getattr(args, "task", None)
     as_json = bool(getattr(args, _JSON_ATTR, False))
     if task_name:
@@ -793,223 +823,105 @@ def _handle_checkpoint_command(args: argparse.Namespace) -> None:
         show_checkpoint(checkpoint_path, as_json=as_json)
 
 
+def _validate_profiles(objective: "ParsedObjective", profiles_path: str) -> None:
+    """Validate that the referenced constraint profile exists.
+
+    Args:
+        objective: Parsed objective to check.
+        profiles_path: Path to the profiles YAML file.
+    """
+    try:
+        profiles = load_profiles(Path(profiles_path))
+    except ValueError as exc:
+        display_error(str(exc))
+        raise SystemExit(1) from exc
+    profile_name = objective.tests_constraint_profile or "default"
+    available = sorted(k for k in profiles if k != _TASKS_ATTR)
+    if profile_name not in profiles:
+        display_error(
+            f"Objective references profile '{profile_name}' "
+            f"which is not in {profiles_path}. Available: {_JOIN_SEP.join(available)}"
+        )
+        raise SystemExit(1)
+    display_success(f"  Profiles file valid. Available: {_JOIN_SEP.join(available)}")
+
+
+
+def _has_error_severity(issues: list[dict]) -> bool:
+    """Check whether any issue has error severity.
+
+    Args:
+        issues: List of issue dicts from the LLM review.
+
+    Returns:
+        True when at least one issue has severity 'error'.
+    """
+    return any(i.get(_SEVERITY_KEY) == _SEVERITY_ERROR for i in issues)
+
+
+def _validate_error_exit(message: str, as_json: bool) -> None:
+    """Display an error and exit with code 1.
+
+    Args:
+        message: Error message to display.
+        as_json: When True, emit JSON instead of Rich output.
+    """
+    if as_json:
+        print(json.dumps({"valid": False, _SEVERITY_ERROR: message}))
+    else:
+        display_error(message)
+
+
 def run_validate_command(args: argparse.Namespace) -> None:
     """Validate an objective file and optionally its profiles.
 
     Args:
         args: Parsed CLI arguments object.
     """
-    objective_path = Path(args.objective_path)
+    as_json = bool(getattr(args, _JSON_ATTR, False))
+    ws = Path(args.workspace).resolve() if getattr(args, _WORKSPACE_ATTR, None) else None
+    raw_path = Path(args.objective_path)
+    objective_path = (ws / raw_path) if ws and not raw_path.is_absolute() else raw_path
     try:
         objective = parse_objective(objective_path)
     except ValueError as exc:
-        display_error(str(exc))
+        _validate_error_exit(str(exc), as_json)
         raise SystemExit(1) from exc
 
-    print(f"Objective '{objective.name}' is valid.")
-    print(f"  Tasks: {len(objective.tasks)}")
-    for task in objective.tasks:
-        print(f"    - {task.name}")
-
-    profiles_path = getattr(args, _PROFILES_ATTR, None)
-    if profiles_path:
+    issues: list[dict] = []
+    if not getattr(args, "static", False):
+        config = Config()
         try:
-            profiles = load_profiles(Path(profiles_path))
-        except ValueError as exc:
-            display_error(str(exc))
-            raise SystemExit(1) from exc
-        profile_name = objective.tests_constraint_profile or "default"
-        available = sorted(k for k in profiles if k != _TASKS_ATTR)
-        if profile_name not in profiles:
-            display_error(
-                f"Objective references profile '{profile_name}' "
-                f"which is not in {profiles_path}. Available: {_JOIN_SEP.join(available)}"
+            issues = review_objective_semantics(
+                objective,
+                agent=config.critic_agent,
+                model=config.critic_model,
+                budget=config.max_budget_usd,
             )
-            raise SystemExit(1)
-        print(f"  Profiles file valid. Available: {_JOIN_SEP.join(available)}")
-
-
-def run_profiles_command(args: argparse.Namespace) -> None:
-    """List available constraint profiles from a profiles YAML file.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    workspace = Path(args.workspace).resolve()
-    profiles_path = Path(args.profiles)
-    if not profiles_path.is_absolute():
-        profiles_path = workspace / profiles_path
-
-    try:
-        profiles = load_profiles(profiles_path)
-    except ValueError as exc:
-        display_error(str(exc))
-        raise SystemExit(1) from exc
-
-    profile_names = sorted(k for k in profiles if k != _TASKS_ATTR)
-    if not profile_names:
-        print("No profiles defined.")
-        return
-
-    print(f"Available profiles ({profiles_path}):")
-    for name in profile_names:
-        profile = profiles[name]
-        primary_keys = sorted(profile.get("primary", {}).keys())
-        summary = _JOIN_SEP.join(primary_keys[:_MAX_PROFILE_KEYS_SHOWN])
-        if len(primary_keys) > _MAX_PROFILE_KEYS_SHOWN:
-            summary += f", ... ({len(primary_keys)} total)"
-        print(f"  {name}: {summary or '(empty)'}")
-
-
-def run_show_command(args: argparse.Namespace) -> None:
-    """Show test suite and adversarial report for a specific task.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    checkpoint_path = Path(args.checkpoint)
-    workspace = getattr(args, "workspace", None)
-    if workspace and not checkpoint_path.is_absolute():
-        checkpoint_path = Path(workspace).resolve() / checkpoint_path
-    task_name = args.task_name
-    as_json = bool(getattr(args, _JSON_ATTR, False))
-    _show_task_detail(checkpoint_path, task_name, as_json=as_json)
-
-
-def _load_objective_yaml_mapping(objective_path: Path) -> dict:
-    """Load objective YAML and require a top-level mapping."""
-    import yaml
-
-    try:
-        raw_text = objective_path.read_text(encoding=_TEXT_ENCODING)
-    except FileNotFoundError:
-        display_error(f"Objective file not found: {objective_path}")
-        raise SystemExit(1) from None
-    except OSError as exc:
-        display_error(f"Could not read objective file {objective_path}: {exc}")
-        raise SystemExit(1) from exc
-
-    try:
-        payload = yaml.safe_load(raw_text)
-    except yaml.YAMLError as exc:
-        display_error(f"Could not parse YAML in {objective_path}: {exc}")
-        raise SystemExit(1) from exc
-
-    if not isinstance(payload, dict):
-        display_error("Objective file is not a valid YAML mapping.")
-        raise SystemExit(1)
-    return payload
-
-
-def _write_validated_objective_atomic(
-    objective_path: Path,
-    raw: dict,
-    failure_prefix: str,
-) -> None:
-    """Write updated objective atomically after schema validation."""
-    import yaml
-
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding=_TEXT_ENCODING,
-            dir=str(objective_path.parent),
-            prefix=f".{objective_path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            handle.write(yaml.safe_dump(raw, sort_keys=False))
-        try:
-            parse_objective(temp_path)
-        except ValueError as exc:
-            display_error(f"{failure_prefix}: {exc}")
+        except RuntimeError as exc:
+            _validate_error_exit(str(exc), as_json)
             raise SystemExit(1) from exc
-        temp_path.replace(objective_path)
-    except OSError as exc:
-        display_error(f"Could not update objective file {objective_path}: {exc}")
-        raise SystemExit(1) from exc
-    finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
 
-
-def run_add_task_command(args: argparse.Namespace) -> None:
-    """Add a task to an objective file.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    objective_path = Path(args.objective_path)
-    raw = _load_objective_yaml_mapping(objective_path)
-
-    task_entry: dict = {"name": args.name}
-    if args.description:
-        task_entry["description"] = args.description
-    if args.signature:
-        task_entry["signature"] = args.signature
-
-    if _TASKS_ATTR not in raw:
-        raw[_TASKS_ATTR] = []
-    if not isinstance(raw[_TASKS_ATTR], list):
-        display_error("Objective field `tasks` must be a list.")
-        raise SystemExit(1)
-    raw[_TASKS_ATTR].append(task_entry)
-
-    _write_validated_objective_atomic(
-        objective_path,
-        raw,
-        "Validation failed after adding task",
-    )
-    print(f"Added task '{args.name}' to {objective_path}")
-
-
-def run_add_eval_command(args: argparse.Namespace) -> None:
-    """Add a train eval entry to an objective file.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    objective_path = Path(args.objective_path)
-    raw = _load_objective_yaml_mapping(objective_path)
-
-    eval_entry = {"input": args.eval_input, "output": args.eval_output}
-    task_name = getattr(args, "task", None)
-
-    if task_name:
-        tasks = raw.get(_TASKS_ATTR, [])
-        if not isinstance(tasks, list):
-            display_error("Objective field `tasks` must be a list.")
-            raise SystemExit(1)
-        target = next(
-            (t for t in tasks if isinstance(t, dict) and t.get("name") == task_name),
-            None,
-        )
-        if target is None:
-            display_error(f"Task '{task_name}' not found in objective.")
-            raise SystemExit(1)
-        if _TRAIN_EVALS_KEY not in target:
-            target[_TRAIN_EVALS_KEY] = []
-        if not isinstance(target[_TRAIN_EVALS_KEY], list):
-            display_error(f"Task '{task_name}' field `train_evals` must be a list.")
-            raise SystemExit(1)
-        target[_TRAIN_EVALS_KEY].append(eval_entry)
+    if as_json:
+        print(json.dumps({
+            "name": objective.name,
+            "tasks": [t.name for t in objective.tasks],
+            "valid": not _has_error_severity(issues),
+            "issues": issues,
+        }))
     else:
-        if _TRAIN_EVALS_KEY not in raw:
-            raw[_TRAIN_EVALS_KEY] = []
-        if not isinstance(raw[_TRAIN_EVALS_KEY], list):
-            display_error("Objective field `train_evals` must be a list.")
-            raise SystemExit(1)
-        raw[_TRAIN_EVALS_KEY].append(eval_entry)
+        display_success(f"Objective '{objective.name}' is valid.")
+        display_info(f"  Tasks: {len(objective.tasks)}")
+        for task in objective.tasks:
+            display_info(f"    - {task.name}")
+        profiles_path = getattr(args, _PROFILES_ATTR, None)
+        if profiles_path:
+            _validate_profiles(objective, profiles_path)
+        if issues:
+            display_validation_report(issues)
 
-    _write_validated_objective_atomic(
-        objective_path,
-        raw,
-        "Validation failed after adding eval",
-    )
-    scope = f"task '{task_name}'" if task_name else "top-level"
-    print(f"Added eval to {scope} in {objective_path}")
+    if _has_error_severity(issues):
+        raise SystemExit(1)
 
 
 def run_evaluate(
@@ -1044,7 +956,10 @@ def run_evaluate(
     try:
         objective = parse_objective(objective_path)
     except ValueError as exc:
-        display_error(f"Invalid objective '{objective_path}': {exc}")
+        display_error(
+            f"Invalid objective '{objective_path}': {exc}",
+            hint=_HINT_INIT_OR_CHECK_PATH,
+        )
         raise SystemExit(1) from exc
 
     if not checkpoint_path.is_absolute():
@@ -1091,48 +1006,12 @@ def run_evaluate(
         policy=active_policy,
         profiles_path=effective_profiles_path,
     )
-    display_evaluation_result(passed)
+    if passed:
+        state.evaluation_passed = True
+        save_checkpoint(state, checkpoint_path)
     if not passed:
         raise SystemExit(1)
 
-
-def run_migrate(args: argparse.Namespace) -> None:
-    """Run objective/checkpoint migration operations.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    objective_pair = (args.objective_in, args.objective_out)
-    checkpoint_pair = (args.checkpoint_in, args.checkpoint_out)
-
-    if bool(objective_pair[0]) != bool(objective_pair[1]):
-        display_error("Objective migration requires both --objective-in and --objective-out.")
-        raise SystemExit(2)
-
-    if bool(checkpoint_pair[0]) != bool(checkpoint_pair[1]):
-        display_error("Checkpoint migration requires both --checkpoint-in and --checkpoint-out.")
-        raise SystemExit(2)
-
-    if not objective_pair[0] and not checkpoint_pair[0]:
-        display_error(
-            "Nothing to migrate. Provide objective and/or checkpoint input/output pairs."
-        )
-        raise SystemExit(2)
-
-    if objective_pair[0]:
-        try:
-            migrate_objective_file(Path(objective_pair[0]), Path(objective_pair[1]))
-        except (ValueError, OSError) as exc:
-            display_error(str(exc))
-            raise SystemExit(1) from exc
-        print(f"Migrated objective: {objective_pair[0]} -> {objective_pair[1]}")
-    if checkpoint_pair[0]:
-        try:
-            migrate_checkpoint_file(Path(checkpoint_pair[0]), Path(checkpoint_pair[1]))
-        except (ValueError, OSError) as exc:
-            display_error(str(exc))
-            raise SystemExit(1) from exc
-        print(f"Migrated checkpoint: {checkpoint_pair[0]} -> {checkpoint_pair[1]}")
 
 
 def run_promote(args: argparse.Namespace) -> None:
@@ -1150,14 +1029,14 @@ def run_promote(args: argparse.Namespace) -> None:
         if status is None:
             display_error(
                 "No optimizer status found for this workspace. "
-                "Run `crucis checkpoint` to discover candidate-ready runs or use "
+                "Run `crucis status` to discover candidate-ready runs or use "
                 "`crucis promote --run-id <id> --force`."
             )
             raise SystemExit(1)
         if not status.candidate_ready or status.candidate_run_id != run_id:
             display_error(
                 f"Run `{run_id}` is not marked candidate-ready for promotion. "
-                "Use the candidate shown by `crucis checkpoint` or pass --force "
+                "Use the candidate shown by `crucis status` or pass --force "
                 "to override."
             )
             raise SystemExit(1)
@@ -1182,11 +1061,36 @@ def run_promote(args: argparse.Namespace) -> None:
     next_status.message = f"promoted candidate from run {run_id}"
     next_status.updated_at = datetime.now(UTC).isoformat()
     save_optimizer_status(workspace, next_status)
+    if bool(getattr(args, _JSON_ATTR, False)):
+        print(json.dumps({"run_id": run_id, "promoted": True}))
+    else:
+        display_success(f"Promoted candidate policy from run {run_id}.")
 
 
 def _is_interactive_terminal() -> bool:
-    """Return True when both stdin and stdout are attached to a TTY."""
-    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    """Return True when both stdin and stderr are attached to a TTY.
+
+    Returns:
+        True if both stdin and stderr are TTYs.
+    """
+    return bool(sys.stdin.isatty() and sys.stderr.isatty())
+
+
+_RECOMMENDED_PYTHON = (3, 12)
+_MINIMUM_PYTHON = (3, 10)
+
+
+def _warn_if_unsupported_python() -> None:
+    """Print an explicit warning when running on a non-recommended interpreter."""
+    current = sys.version_info
+    version_tuple = (current.major, current.minor)
+    if version_tuple >= _RECOMMENDED_PYTHON:
+        return
+    label = f"Python {current.major}.{current.minor}.{current.micro}"
+    if version_tuple >= _MINIMUM_PYTHON:
+        display_warning(f"{label} is supported but Python 3.12+ is recommended.")
+    else:
+        display_warning(f"{label} is unsupported. Crucis requires Python 3.10+.")
 
 
 def run_init_command(args: argparse.Namespace) -> None:
@@ -1195,37 +1099,97 @@ def run_init_command(args: argparse.Namespace) -> None:
     Args:
         args: Parsed CLI arguments object.
     """
+    _warn_if_unsupported_python()
+
     workspace = Path(args.workspace).resolve()
     no_agent = bool(getattr(args, "no_agent", False))
     require_agent = bool(getattr(args, "require_agent", False))
+    forced_existing_codebase = bool(getattr(args, "existing_codebase", False))
 
     if no_agent and require_agent:
-        display_error("Cannot use --no-agent together with --require-agent.")
+        display_error(
+            "Cannot use --no-agent together with --require-agent.",
+            hint="Use only one of these flags.",
+        )
         raise SystemExit(2)
 
-    if not no_agent:
-        if _try_agent_onboarding(workspace, args):
+    from crucis.intake.scaffold import prompt_model_selection
+
+    agent_choice, model_choice = (None, None) if no_agent else prompt_model_selection()
+
+    already_initialized = _workspace_has_files(workspace)
+    if already_initialized and agent_choice is not None:
+        _update_settings_model(workspace, agent_choice, model_choice)
+        return
+
+    if not no_agent and not already_initialized:
+        if _try_agent_onboarding(workspace, args, agent_choice, model_choice):
             return
         if require_agent:
-            display_error("Agent onboarding is required but did not complete.")
+            display_error(
+                "Agent onboarding is required but did not complete.",
+                hint="Retry or pass '--no-agent' to use static templates.",
+            )
             raise SystemExit(1)
 
     name = str(getattr(args, "name", "my_project"))
-    created = scaffold_workspace(workspace, name=name)
-    if not created:
-        print("Workspace already initialized (all files exist).")
+    existing_codebase = forced_existing_codebase or detect_existing_codebase(workspace)
+    created = scaffold_workspace(
+        workspace, name=name, existing_codebase=existing_codebase,
+        agent=agent_choice, model=model_choice,
+    )
+    as_json = bool(getattr(args, _JSON_ATTR, False))
+    _display_init_result(workspace, created, existing_codebase, as_json)
+
+
+def _display_init_result(
+    workspace: Path,
+    created: list[Path],
+    existing_codebase: bool,
+    as_json: bool,
+) -> None:
+    """Display scaffold results in human-readable or JSON format.
+
+    Args:
+        workspace: Workspace root directory.
+        created: List of created file paths (empty if nothing new).
+        existing_codebase: Whether the workspace was treated as existing codebase.
+        as_json: When True, emit JSON instead of Rich output.
+    """
+    payload = {
+        "workspace": str(workspace),
+        "created": [str(p) for p in created],
+        "existing_codebase": existing_codebase,
+    }
+    if as_json:
+        print(json.dumps(payload))
         return
+    if not created:
+        display_info("Workspace already initialized (all files exist).")
+        return
+    if existing_codebase:
+        display_info(
+            "Existing codebase detected. "
+            "Objective scaffold skips src/solution.py and leaves target_files for you to set."
+        )
     for path in created:
-        print(f"  Created: {path}")
-    _print_next_steps(workspace)
+        display_info(f"  Created: {path}")
+    _print_next_steps(workspace, existing_codebase=existing_codebase)
 
 
-def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
+def _try_agent_onboarding(
+    workspace: Path,
+    args: argparse.Namespace,
+    agent_override: str | None = None,
+    model_override: str | None = None,
+) -> bool:
     """Attempt agent-driven onboarding, returning True on success.
 
     Args:
         workspace: Target workspace directory.
         args: Parsed CLI arguments with optional --agent flag.
+        agent_override: Agent name from interactive prompt, or None.
+        model_override: Model name from interactive prompt, or None.
 
     Returns:
         True when the agent completed and generated valid files.
@@ -1236,8 +1200,8 @@ def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
     from crucis.intake.scaffold import run_agent_onboarding, validate_onboarding_output
 
     config = Config()
-    agent = getattr(args, "agent", None) or config.generation_agent
-    model = config.generation_model
+    agent = getattr(args, "agent", None) or agent_override or config.generation_agent
+    model = model_override or config.generation_model
     require_agent = bool(getattr(args, "require_agent", False))
 
     if not _is_interactive_terminal():
@@ -1248,7 +1212,7 @@ def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
         if require_agent:
             display_error(message)
             raise SystemExit(1)
-        print("Non-interactive terminal detected. Skipping agent onboarding and using static templates.")
+        display_info("Non-interactive terminal detected. Skipping agent onboarding and using static templates.")
         return False
 
     if shutil.which(agent) is None:
@@ -1258,7 +1222,7 @@ def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
                 f"{message} Install it, remove --require-agent, or pass --no-agent."
             )
             raise SystemExit(1)
-        print(f"{message} Using static templates.")
+        display_info(f"{message} Using static templates.")
         return False
 
     success = run_agent_onboarding(workspace, agent, model)
@@ -1267,7 +1231,7 @@ def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
         if require_agent:
             display_error(f"{message} Remove --require-agent or pass --no-agent.")
             raise SystemExit(1)
-        print(f"{message} Using static templates.")
+        display_info(f"{message} Using static templates.")
         return False
 
     if not validate_onboarding_output(workspace):
@@ -1275,64 +1239,66 @@ def _try_agent_onboarding(workspace: Path, args: argparse.Namespace) -> bool:
         if require_agent:
             display_error(f"{message} Remove --require-agent or pass --no-agent.")
             raise SystemExit(1)
-        print(f"{message} Using static templates.")
+        display_info(f"{message} Using static templates.")
         return False
 
     _print_next_steps(workspace)
     return True
 
 
-def _print_next_steps(workspace: Path) -> None:
+def _workspace_has_files(workspace: Path) -> bool:
+    """Check whether the workspace already has crucis files.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        True when objective.yaml and settings.yaml both exist.
+    """
+    from crucis.persistence.settings import settings_path
+
+    return (workspace / "objective.yaml").exists() and settings_path(workspace).exists()
+
+
+def _update_settings_model(
+    workspace: Path, agent: str, model: str | None,
+) -> None:
+    """Update agent/model fields in an existing settings.yaml.
+
+    Args:
+        workspace: Workspace root directory.
+        agent: Agent name to set.
+        model: Model name to set.
+    """
+    from crucis.intake.scaffold import _render_settings_template
+    from crucis.persistence.settings import settings_path
+
+    path = settings_path(workspace)
+    path.write_text(_render_settings_template(agent, model), encoding="utf-8")
+    display_success(f"Updated settings: agent={agent}, model={model}")
+
+
+def _print_next_steps(workspace: Path, existing_codebase: bool = False) -> None:
     """Print post-init guidance.
 
     Args:
         workspace: Workspace root directory.
+        existing_codebase: Whether init scaffold was generated for an existing repository.
     """
-    print(f"\nWorkspace ready at {workspace}")
-    print("Next steps:")
-    print("  crucis plan objective.yaml              # generate a structured plan")
-    print("  crucis fit objective.yaml -y            # generate and harden test suites")
-    print("  crucis fit objective.yaml --task <name> # process a single task")
-    print("  crucis fit objective.yaml --dry-run     # preview generation prompts")
+    display_success(f"\nWorkspace ready at {workspace}")
+    if not (workspace / ".git").is_dir():
+        display_warning("run `git init` — codex requires a trusted git repository.")
+    if existing_codebase:
+        display_info(
+            "Update objective.yaml target_files/context_files "
+            "to point at existing project modules."
+        )
+    display_info("Next steps:")
+    display_info("  crucis run                    # run the full pipeline")
+    display_info("  crucis run --plan             # generate a structured plan first")
+    display_info("  crucis run --task <name>      # process a single task")
+    display_info("  crucis run --dry-run          # preview generation prompts")
 
-
-def run_plan_command(args: argparse.Namespace) -> None:
-    """Generate a structured plan.md for test-suite generation.
-
-    Args:
-        args: Parsed CLI arguments object.
-    """
-    objective_path = Path(args.objective_path)
-    if not objective_path.exists():
-        display_error(f"Objective file not found: {objective_path}")
-        raise SystemExit(1)
-
-    workspace = Path(args.workspace).resolve() if args.workspace else objective_path.parent
-    _ensure_runtime_settings(workspace)
-
-    plan_path = workspace / "plan.md"
-    if plan_path.exists() and not bool(getattr(args, "force", False)):
-        display_error(f"Plan already exists at {plan_path}. Use --force to regenerate.")
-        raise SystemExit(1)
-
-    objective = parse_objective(objective_path)
-    profiles = load_profiles(_resolve_plan_profiles(workspace, Path(args.profiles)))
-    effective_tasks = objective.tasks or [objective]
-    constraints_map = {
-        task.name: resolve_constraints(objective, profiles, task.name) for task in effective_tasks
-    }
-
-    config = Config()
-    model_label = config.generation_model or "default model"
-    print(f"Generating plan with {config.generation_agent} ({model_label})...")
-    try:
-        plan_content = build_generation_plan(objective, constraints_map, config)
-    except (RuntimeError, ValueError) as exc:
-        display_error(str(exc))
-        raise SystemExit(1) from exc
-    created = write_plan_to_workspace(plan_content, workspace)
-    print(f"  Created: {created}")
-    print("\nRun `crucis fit objective.yaml -y` to use this plan during generation.")
 
 
 def _resolve_plan_profiles(workspace: Path, profiles_path: Path) -> Path:
@@ -1360,6 +1326,9 @@ def run_doctor_command(args: argparse.Namespace) -> None:
         args: Parsed CLI arguments object.
     """
     workspace = Path(args.workspace).resolve()
+    ws_settings = try_load_runtime_settings(workspace)
+    if ws_settings is not None:
+        apply_agent_settings_to_env(ws_settings)
     report = run_doctor(
         workspace=workspace,
         objective_path=Path(args.objective) if getattr(args, "objective", None) else None,
@@ -1371,7 +1340,8 @@ def run_doctor_command(args: argparse.Namespace) -> None:
     if bool(getattr(args, _JSON_ATTR, False)):
         print(json.dumps(doctor_report_payload(report), indent=2))
     else:
-        _print_doctor_report(report)
+        verbose = bool(getattr(args, "verbose", False))
+        display_doctor_report(report, verbose=verbose)
     if not report.ok:
         raise SystemExit(1)
 
@@ -1386,7 +1356,7 @@ def run_optimizer_worker_command(args: argparse.Namespace) -> None:
     loop_mode = bool(getattr(args, "loop", False))
     exit_code = run_optimizer_worker(workspace, once=not loop_mode)
     if not bool(getattr(args, _JSON_ATTR, False)) and exit_code == 0 and not loop_mode:
-        print("Optimizer worker: no pending jobs. Nothing to do.")
+        display_info("Optimizer worker: no pending jobs. Nothing to do.")
     if bool(getattr(args, _JSON_ATTR, False)):
         print(
             json.dumps(
@@ -1401,37 +1371,6 @@ def run_optimizer_worker_command(args: argparse.Namespace) -> None:
     if exit_code != 0:
         raise SystemExit(exit_code)
 
-
-def _fail_on_legacy_usage(argv: list[str]) -> None:
-    """Reject removed legacy commands/flags with actionable upgrade hints.
-
-    Args:
-        argv: Optional CLI arguments; defaults to process arguments when None.
-    """
-    if not argv:
-        return
-
-    command = argv[0]
-    if command in _LEGACY_COMMANDS:
-        replacement = _LEGACY_COMMANDS[command]
-        display_error(
-            f"Legacy command `{command}` was removed. Use `crucis {replacement}`. "
-            "If you still have old schema/session files, migrate first with "
-            "`crucis migrate --objective-in ... --objective-out ...` and "
-            "`crucis migrate --checkpoint-in ... --checkpoint-out ...`."
-        )
-        raise SystemExit(2)
-
-    for arg in argv:
-        if arg in _LEGACY_FLAGS:
-            replacement = _LEGACY_FLAGS[arg]
-            display_error(
-                f"Legacy flag `{arg}` was removed. Use `{replacement}`. "
-                "If you still have old schema/session files, migrate first with "
-                "`crucis migrate --objective-in ... --objective-out ...` and "
-                "`crucis migrate --checkpoint-in ... --checkpoint-out ...`."
-            )
-            raise SystemExit(2)
 
 
 def _ensure_runtime_settings(workspace: Path) -> None:
@@ -1481,25 +1420,6 @@ def _run_preflight_or_exit(
         display_error(detail)
     raise SystemExit(1)
 
-
-def _print_doctor_report(report) -> None:
-    """Print human-readable diagnostics report.
-
-    Args:
-        report: Doctor report payload.
-    """
-    print(f"Workspace: {report.workspace}")
-    for check in report.checks:
-        prefix = {
-            "ok": "OK",
-            "warn": "WARN",
-            "fail": "FAIL",
-        }.get(check.status, check.status.upper())
-        line = f"[{prefix}] {check.id}: {check.message}"
-        if check.hint:
-            line += f" | hint: {check.hint}"
-        print(line)
-    print("Doctor status: PASS" if report.ok else "Doctor status: FAIL")
 
 
 def _checkpoint_payload(state, checkpoint_path: Path, optimizer_status) -> dict:

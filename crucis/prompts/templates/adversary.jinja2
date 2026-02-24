@@ -1,9 +1,9 @@
-{#- Adversarial review prompt for red-team train suite analysis. -#}
-{% from "_macros.jinja2" import train_evals, constraints_section, policy_context %}
-You are a red-team adversary reviewing a train suite.
+{#- Adversarial review prompt for red-team test suite analysis. -#}
+{% from "_macros.jinja2" import examples, constraints_section, policy_context %}
+You are a red-team adversary reviewing a test suite.
 
 {{ policy_context(policy, "adversary") -}}
-Train suite code:
+Test suite code:
 ```python
 {{ train_suite_source }}
 ```
@@ -12,13 +12,21 @@ Objective description: {{ objective.description }}
 
 Signature: {{ objective.signature or NOT_SPECIFIED }}
 
-Train evals:
-{{ train_evals(objective) }}
+Examples:
+{{ examples(objective) }}
 
 {{ constraints_section(constraints) -}}
-Find ways an implementation could pass this train suite without truly implementing the objective.
+Analyze this test suite in two passes:
 
-Respond with ONLY a JSON object with exactly these keys:
-{"attack_vectors": ["string", ...], "generalization_gaps": ["string", ...], "suggested_probe_tests": ["string", ...]}
+1. Find ways an implementation could pass this test suite without truly implementing the objective (hardcoded returns, lookup tables, input fingerprinting).
+2. Verify that each test assertion uses the correct expected value for the given input — compute or reason through edge cases to catch wrong assertions.
 
-Each value must be a flat list of plain strings. Return at most 3 items per list.
+Think through your analysis step by step, then provide your findings as a JSON object with exactly these keys:
+
+<output_schema>
+{"attack_vectors": ["string", ...], "generalization_gaps": ["string", ...], "suggested_probe_tests": ["string", ...], "correctness_issues": ["string", ...]}
+</output_schema>
+
+Each value must be a flat list of plain strings. Include up to 3 items per list.
+For correctness_issues, describe: which test, what value is wrong, what it should be.
+If the tests are comprehensive, correct, and hard to cheat, return empty lists — do not invent issues.
