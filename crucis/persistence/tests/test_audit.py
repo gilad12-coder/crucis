@@ -3,7 +3,7 @@
 import json
 
 from crucis.models import CLIResult
-from crucis.persistence.audit import log_agent_call, log_interactive_agent_call
+from crucis.persistence.audit import log_agent_call
 from crucis.persistence.events import EventLogger
 
 
@@ -98,43 +98,3 @@ def test_log_agent_call_includes_task_and_attempt(tmp_path):
     assert rec["task"] == "login"
     assert rec["attempt"] == 2
     assert rec["max_attempts"] == 3
-
-
-def test_log_interactive_agent_call_writes_metadata(tmp_path):
-    """Interactive call metadata should be persisted correctly.
-
-    Args:
-        tmp_path: Temporary directory provided by pytest.
-    """
-    with EventLogger(tmp_path, "test") as logger:
-        log_interactive_agent_call(
-            logger,
-            agent="claude",
-            model="sonnet",
-            exit_code=0,
-            duration_sec=5.1234,
-            call_site="scaffold",
-        )
-
-    events = _read_events(logger)
-    assert len(events) == 1
-    rec = events[0]
-    assert rec["event"] == "interactive_agent_call"
-    details = rec["details"]
-    assert details["agent"] == "claude"
-    assert details["model"] == "sonnet"
-    assert details["exit_code"] == 0
-    assert details["duration_sec"] == 5.123
-    assert details["call_site"] == "scaffold"
-
-
-def test_log_interactive_agent_call_noop_when_logger_is_none():
-    """Passing None as logger should not raise."""
-    log_interactive_agent_call(
-        None,
-        agent="claude",
-        model="sonnet",
-        exit_code=0,
-        duration_sec=0.1,
-        call_site="test",
-    )

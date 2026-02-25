@@ -16,7 +16,6 @@ from crucis.diagnostics import collect_preflight_checks, doctor_report_payload, 
 from crucis.display import (
     configure_console,
     display_adversarial_report,
-    display_agent_boundary,
     display_checkpoint_table,
     display_doctor_report,
     display_error,

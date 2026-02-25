@@ -181,15 +181,6 @@ class WorkspaceContext:
         """
         return self.workspace / DEFAULT_CHECKPOINT_PATH
 
-    @property
-    def has_objective(self) -> bool:
-        """Whether objective.yaml exists in the workspace.
-
-        Returns:
-            True when the objective file is present.
-        """
-        return self.objective_path.exists()
-
 
 def resolve_workspace(override: str | None = None) -> Path:
     """Resolve workspace from explicit override, env var, or cwd.
@@ -206,20 +197,3 @@ def resolve_workspace(override: str | None = None) -> Path:
     if env_ws:
         return Path(env_ws).resolve()
     return Path.cwd().resolve()
-
-
-# Keep backward compat — old resolve_path without workspace validation.
-def resolve_path(override: str | None, default: Path) -> Path:
-    """Resolve a file path from an override string or a default.
-
-    Args:
-        override: Optional override path string.
-        default: Default path if override is None.
-
-    Returns:
-        Resolved absolute path.
-    """
-    if override:
-        p = Path(override)
-        return p.resolve() if p.is_absolute() else (resolve_workspace() / p).resolve()
-    return default if default.is_absolute() else default.resolve()

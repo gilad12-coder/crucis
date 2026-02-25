@@ -14,7 +14,7 @@ from crucis.display import (
     display_hardening_cycle,
     display_sandbox_status,
     display_task_header,
-    display_train_suite_source,
+    display_test_suite_source,
 )
 from crucis.models import AdversarialReport, CheckpointState, TaskProgress, TrainingStatus
 from crucis.persistence.policy import OptimizerStatus
@@ -30,10 +30,10 @@ def _capture_console() -> tuple[Console, StringIO]:
     return Console(file=buf, force_terminal=False, color_system=None), buf
 
 
-def test_display_train_suite_source_renders_title():
+def test_display_test_suite_source_renders_title():
     """Test suite panel should render expected title text."""
     console, buf = _capture_console()
-    display_train_suite_source("def test_x():\n    assert True", console=console)
+    display_test_suite_source("def test_x():\n    assert True", console=console)
     assert "Generated Test Suite" in buf.getvalue()
 
 

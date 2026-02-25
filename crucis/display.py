@@ -86,10 +86,6 @@ def display_test_suite_source(source: str, console: Console | None = None) -> No
     c.print(Panel(syntax, title="Generated Test Suite", border_style="cyan"))
 
 
-# Backward-compatible alias.
-display_train_suite_source = display_test_suite_source
-
-
 def display_adversarial_report(
     report: AdversarialReport,
     console: Console | None = None,

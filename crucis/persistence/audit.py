@@ -12,7 +12,6 @@ from crucis.persistence.events import EventLogger
 
 _DURATION_DECIMALS = 3
 _EVENT_AGENT_CALL = "agent_call"
-_EVENT_INTERACTIVE_CALL = "interactive_agent_call"
 
 
 def log_agent_call(
@@ -61,38 +60,5 @@ def log_agent_call(
             "exit_code": result.exit_code,
             "stdout": result.stdout,
             "stderr": result.stderr,
-        },
-    )
-
-
-def log_interactive_agent_call(
-    logger: EventLogger | None,
-    *,
-    agent: str,
-    model: str,
-    exit_code: int,
-    duration_sec: float,
-    call_site: str,
-) -> None:
-    """Persist metadata for an interactive (terminal-passthrough) agent session.
-
-    Args:
-        logger: Active event logger; no-op when *None*.
-        agent: Agent name (claude or codex).
-        model: Model name used for the call.
-        exit_code: Process exit code from the interactive session.
-        duration_sec: Wall-clock duration of the session in seconds.
-        call_site: Identifier for the originating function.
-    """
-    if logger is None:
-        return
-    logger.emit(
-        _EVENT_INTERACTIVE_CALL,
-        details={
-            "call_site": call_site,
-            "agent": agent,
-            "model": model,
-            "exit_code": exit_code,
-            "duration_sec": round(duration_sec, _DURATION_DECIMALS),
         },
     )
