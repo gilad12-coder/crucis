@@ -1,20 +1,20 @@
 # Crucis Documentation
 
-Objective-driven coding with adversarial verification and background policy optimization.
+An autonomy scaffold for code-generating agents. Crucis provides structured automated feedback — tests, adversarial review, constraints, holdout verification — so agents can iterate longer without human intervention.
 
 ## Get started
 
 - **[Start Here](start-here.md)** — prerequisites, installation, and orientation
 - **[New Project Quickstart](quickstart-new-project.md)** — build a verified function from scratch
 - **[Existing Codebase Quickstart](quickstart-existing-codebase.md)** — add verification to your current project
-- **[Why Crucis](why-crucis.md)** — understand the verification-first approach
+- **[Why Crucis](why-crucis.md)** — understand the autonomy scaffold approach
 
 ## Learn more
 
 - **[How It Works](workflow.md)** — fit/evaluate loop, adversarial hardening, checkpoints
 - **[Use Cases](use-cases.md)** — common scenarios and entry points
 - **[Architecture](architecture.md)** — system design and module roles
-- **[Background Optimizer](optimizer.md)** — automatic prompt improvement across runs
+- **[Background Optimizer](optimizer.md)** — (experimental) automatic prompt improvement across runs
 
 ## Reference
 

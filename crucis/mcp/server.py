@@ -29,12 +29,12 @@ from crucis.mcp._workspace import (
 # ---------------------------------------------------------------------------
 
 _INSTRUCTIONS = (
-    "Crucis is a verification-first TDD pipeline. Use these tools to scaffold "
-    "workspaces, validate objectives, generate and harden test suites, check "
-    "code against constraints, run the full pipeline, and verify implementations. "
-    "Two modes: (1) pipeline mode — Crucis spawns agents automatically, "
-    "(2) step-by-step mode — you act as generator/critic/implementer using "
-    "get_prompt, submit, and verify tools."
+    "Crucis is an autonomy scaffold for code-generating agents. It provides "
+    "structured automated feedback — tests, adversarial review, constraint "
+    "checks, holdout verification — so agents can iterate longer without human "
+    "intervention. Two modes: (1) pipeline mode — Crucis spawns agents "
+    "automatically, (2) step-by-step mode — you act as generator/critic/"
+    "implementer using get_prompt, submit, and verify tools."
 )
 
 
@@ -195,9 +195,10 @@ async def crucis_init(
 ) -> dict:
     """Scaffold a new Crucis workspace with starter files.
 
-    Creates objective.yaml, constraints/profiles.yaml, and .crucis/settings.yaml.
-    Skips files that already exist. Use this as the first step when starting a new
-    Crucis project. Do NOT use if objective.yaml already exists — edit it directly instead.
+    Creates objective.yaml (and src/solution.py for new projects).
+    Profiles and settings are optional — use --with-profiles or --with-settings
+    via the CLI if needed. Skips files that already exist. Use this as the first
+    step when starting a new Crucis project.
 
     Args:
         name: Project name for the objective template.
@@ -866,8 +867,8 @@ async def crucis_promote(
 ) -> dict:
     """Promote an optimizer candidate policy to active.
 
-    Replaces the active optimizer policy with the winning candidate from
-    a completed optimization run.
+    The optimizer is experimental and disabled by default. Enable it by adding
+    ``optimizer: enabled: true`` to ``.crucis/settings.yaml``.
 
     Args:
         run_id: Run ID of the candidate to promote.
@@ -882,10 +883,17 @@ async def crucis_promote(
         save_active_policy,
         save_optimizer_status,
     )
+    from crucis.persistence.settings import is_optimizer_enabled
 
     try:
         ws = resolve_workspace(workspace)
         check_workspace_authorized(ws)
+
+        if not is_optimizer_enabled(ws):
+            return _error(
+                ValueError("Optimizer is not enabled for this workspace."),
+                hint="Add 'optimizer:\\n  enabled: true' to .crucis/settings.yaml.",
+            )
         status = load_optimizer_status(ws)
 
         if not force:
@@ -930,18 +938,25 @@ async def crucis_optimizer_worker(
 ) -> dict:
     """Run the background optimizer worker to process queued jobs.
 
-    Drains optimization jobs and evaluates candidate policies. Can run
-    once (default) or in continuous loop mode.
+    The optimizer is experimental and disabled by default. Enable it by adding
+    ``optimizer: enabled: true`` to ``.crucis/settings.yaml``.
 
     Args:
         loop: Run continuously instead of one-shot.
         workspace: Workspace directory root.
     """
     from crucis.execution.optimizer import run_optimizer_worker
+    from crucis.persistence.settings import is_optimizer_enabled
 
     try:
         ws = resolve_workspace(workspace)
         check_workspace_authorized(ws)
+
+        if not is_optimizer_enabled(ws):
+            return _error(
+                ValueError("Optimizer is not enabled for this workspace."),
+                hint="Add 'optimizer:\\n  enabled: true' to .crucis/settings.yaml.",
+            )
         ev_loop = asyncio.get_event_loop()
         exit_code = await ev_loop.run_in_executor(
             None, lambda: run_optimizer_worker(ws, once=not loop)
@@ -971,8 +986,8 @@ async def crucis_check_constraints(
     """Check Python source code against Crucis constraint profiles.
 
     Read-only static analysis. Reports cyclomatic complexity, line counts, and AST
-    checks against primary (blocking) and secondary (advisory) gates. Use this to
-    validate test suites or implementation code before submitting.
+    checks against required (blocking) and advisory gates. Use this to validate
+    test suites or implementation code before submitting.
 
     Args:
         source_code: Python source code to check (max 1 MB).
@@ -1011,11 +1026,11 @@ async def crucis_check_constraints(
         }
         if not primary_result.passed:
             result["next_steps"] = [
-                "Fix primary constraint violations (these are blocking), then re-check",
+                "Fix required constraint violations (these are blocking), then re-check",
             ]
         elif not secondary_result.passed:
             result["next_steps"] = [
-                "Primary constraints pass. Secondary violations are advisory — fix if possible",
+                "Required constraints pass. Advisory violations are non-blocking — fix if possible",
             ]
         else:
             result["next_steps"] = ["All constraints pass."]
@@ -1181,7 +1196,7 @@ async def crucis_submit_test_suite(
 ) -> dict:
     """Save an agent-generated test suite, validate it, and update the checkpoint.
 
-    Validates syntax (AST parse) and constraints (primary + secondary gates),
+    Validates syntax (AST parse) and constraints (required + advisory gates),
     then saves to checkpoint. Use after writing tests based on crucis_get_prompt
     output. If constraints fail, fix violations and resubmit.
 
@@ -1642,7 +1657,7 @@ async def get_task_adversarial_report(task_name: str) -> str:
 
 @mcp.resource("crucis://constraints/{profile_name}")
 async def get_constraint_profile(profile_name: str) -> str:
-    """Constraint profile definition showing primary and secondary gates."""
+    """Constraint profile definition showing required and advisory gates."""
     from crucis.constraints.loader import load_profiles
 
     try:
@@ -1709,9 +1724,8 @@ async def setup_crucis(
         f"   - Set name to '{function_name}'\n"
         f"   - Set description to explain the behavior\n"
         f"   - Set signature to the function signature\n"
-        "   - Add train evals (visible input/output pairs for test generation)\n"
-        "   - Add holdout evals (hidden pairs for final verification — "
-        "prevents overfitting)\n"
+        "   - Add examples (input/output pairs — holdout evals are auto-split)\n"
+        "   - Optionally add behaviors (natural-language descriptions)\n"
         "   - Set target_files to where the implementation should go\n"
         "3. Use crucis_validate to check the objective is valid\n"
         "4. Use crucis_doctor to verify the environment is ready\n"
@@ -1761,8 +1775,8 @@ async def verify_code_quality(
         f"Read `{source_file}` and use crucis_check_constraints to verify it "
         f"against the '{constraint_profile}' constraint profile.\n\n"
         "Report:\n"
-        "- Whether primary constraints pass (blocking issues)\n"
-        "- Whether secondary constraints pass (quality suggestions)\n"
+        "- Whether required constraints pass (blocking issues)\n"
+        "- Whether advisory constraints pass (quality suggestions)\n"
         "- Specific violations and how to fix them\n"
         "- Key metrics (complexity, line counts, etc.)"
     )

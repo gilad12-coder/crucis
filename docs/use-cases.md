@@ -1,6 +1,6 @@
 # Use Cases
 
-Crucis works best for functions and modules with well-defined input/output contracts. Here are common scenarios.
+Crucis is an autonomy scaffold for code-generating agents. It works best for functions and modules with well-defined input/output contracts. Here are common scenarios.
 
 ---
 
@@ -48,7 +48,7 @@ See [Existing Codebase Quickstart](quickstart-existing-codebase.md).
 
 ## Data pipeline validation
 
-Define a data transformation pipeline with input/output contracts. Holdout evals verify the pipeline handles unseen data shapes.
+Define a data transformation pipeline with input/output contracts. Auto-holdout evals (the last ~20% of your examples, automatically reserved) verify the pipeline handles unseen data shapes.
 
 ```bash
 crucis init --name etl_pipeline --no-agent
@@ -63,6 +63,9 @@ crucis run
 Generate and verify multiple related endpoint handlers in one objective. Each task maps to one handler function, all sharing the same target file.
 
 ```yaml
+behaviors:
+  - "Users are assigned sequential integer IDs"
+  - "Created users are retrievable by ID"
 tasks:
   - name: create_user
     description: Create a new user and return the user dict.
@@ -77,6 +80,8 @@ tasks:
       - input: "(1,)"
         output: "{'id': 1, 'name': 'alice'}"
 ```
+
+Just write `examples:` -- the last ~20% are automatically held out as hidden evals.
 
 ```bash
 crucis run --task create_user

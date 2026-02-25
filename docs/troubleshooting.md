@@ -14,7 +14,7 @@ If you're starting fresh, initialize a workspace first:
 crucis init --name my_function
 ```
 
-By default, an AI agent interviews you about your project. Use `--no-agent` for static templates. In non-interactive shells, Crucis falls back to static templates unless `--require-agent` is set. `init` requires Python 3.10+ (3.12+ recommended). Crucis always creates `objective.yaml`, `constraints/profiles.yaml`, and `.crucis/settings.yaml`; it creates `src/solution.py` only for starter/new-project scaffolds. Existing codebases are auto-detected from existing Python files (or forced via `--existing-codebase`), and in that mode objective `target_files` are left empty for you to fill.
+By default, an AI agent interviews you about your project. Use `--no-agent` for static templates. In non-interactive shells, Crucis falls back to static templates unless `--require-agent` is set. `init` requires Python 3.10+ (3.12+ recommended). By default, `crucis init` creates only `objective.yaml` and `src/solution.py` (for new projects). Use `--with-profiles` to also create `constraints/profiles.yaml`, or `--with-settings` for `.crucis/settings.yaml`. Built-in defaults are used when these optional files don't exist, and `settings.yaml` is auto-created on first `crucis run` if needed. Existing codebases are auto-detected from existing Python files (or forced via `--existing-codebase`), and in that mode only `objective.yaml` is created with `target_files` left empty for you to fill.
 
 ### `python -m crucis` fails with module not found
 
@@ -148,31 +148,31 @@ The default Docker pytest timeout is 120 seconds. If tests take longer, the cont
 When generated tests violate constraints, Crucis shows which constraints failed:
 
 ```
-Primary constraint violations:
+Required constraint violations:
   - max_cyclomatic_complexity: measured 18, limit 15
   - max_lines_per_function: measured 95, limit 80
 ```
 
-Primary constraints are hard gates -- the train suite is rejected and regenerated. Secondary constraints are soft gates -- violations are reported but don't block approval.
+Required constraints are hard gates -- the train suite is rejected and regenerated. Advisory constraints are soft gates -- violations are reported but don't block approval.
 
 ### Adjusting constraint profiles
 
-If constraints are too strict for your use case, modify `constraints/profiles.yaml`:
+If constraints are too strict for your use case, create or modify `constraints/profiles.yaml`. Constraints use a flat list format -- they are auto-classified as "required" (blocking) or "advisory" (non-blocking):
 
 ```yaml
 profiles:
   my_profile:
-    primary:
-      max_cyclomatic_complexity: 20
-      max_lines_per_function: 100
-    secondary:
-      require_docstrings: true
+    max_cyclomatic_complexity: 20
+    max_lines_per_function: 100
+    require_docstrings: true
 ```
 
 Then reference in your objective:
 ```yaml
 tests_constraint_profile: my_profile
 ```
+
+If no `profiles.yaml` exists, built-in defaults are used.
 
 ### Implementation constraints apply to entire target files
 

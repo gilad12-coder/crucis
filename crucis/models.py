@@ -113,6 +113,7 @@ class TaskObjective(BaseModel):
     signature: str | None = None
     train_evals: list[TrainEval] = Field(default_factory=list)
     holdout_evals: list[HoldoutEval] = Field(default_factory=list)
+    behaviors: list[str] = Field(default_factory=list)
     tests_constraint_profile: str | None = None
     implementation_constraint_profile: str | None = None
     target_files: list[str] = Field(default_factory=list)
@@ -127,6 +128,7 @@ class ParsedObjective(BaseModel):
     description: str
     train_evals: list[TrainEval] = Field(default_factory=list)
     holdout_evals: list[HoldoutEval] = Field(default_factory=list)
+    behaviors: list[str] = Field(default_factory=list)
     signature: str | None = None
     tests_constraint_profile: str = "default"
     implementation_constraint_profile: str = "default"

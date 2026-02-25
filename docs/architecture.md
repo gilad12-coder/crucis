@@ -1,6 +1,6 @@
 # Architecture
 
-Crucis is a verification-first training loop that generates, attacks, and validates code through a pipeline of LLM agents and static analysis.
+Crucis is an autonomy scaffold that generates, attacks, and validates code through a pipeline of LLM agents and static analysis, providing structured automated feedback so agents can iterate without human intervention.
 
 ## System Overview
 
@@ -16,7 +16,7 @@ flowchart LR
 
 ## Data Flow
 
-1. **Objective intake** -- `intake/objective.py` parses the YAML objective, validates eval expressions, resolves constraint profiles via `constraints/loader.py`.
+1. **Objective intake** -- `intake/objective.py` parses the YAML objective, validates eval expressions, resolves constraint profiles via `constraints/loader.py`. Constraints can be listed flat — the constraint registry auto-classifies them into required (blocking) vs advisory. The legacy `primary:`/`secondary:` format is still supported for backward compatibility.
 
 2. **Fit phase** -- `core/loop.py` iterates through each task:
     - Generates pytest train suites via the generation agent
@@ -33,7 +33,7 @@ flowchart LR
     - Verifies against hidden holdout evals
     - Retries up to `max_iterations` on failure
 
-4. **Background optimization** -- `execution/optimizer.py` queues a job after fit or evaluate:
+4. **Background optimization** (experimental, disabled by default) -- `execution/optimizer.py` queues a job after fit or evaluate. Enable with `optimizer: enabled: true` in `.crucis/settings.yaml`.
     - Spawns a detached worker process
     - Scores candidate policies against baseline using black-box evaluation
     - Promotes winning candidates (manual or auto mode)
@@ -105,8 +105,8 @@ project/
 | `core/test_generator.py` | Python extraction from LLM responses |
 | `intake/objective.py` | YAML objective parsing and validation |
 | `intake/scaffold.py` | Workspace scaffolding and agent-driven onboarding (`crucis init`) |
-| `constraints/loader.py` | Profile loading and constraint resolution |
-| `constraints/checker.py` | AST-based static analysis (1700+ lines, 34 checks) |
+| `constraints/loader.py` | Profile loading, constraint resolution, and auto-classification via the constraint registry |
+| `constraints/checker.py` | AST-based static analysis (1700+ lines, 34 checks — each classified as required or advisory) |
 | `execution/sandbox.py` | Docker-isolated pytest execution |
 | `execution/optimizer.py` | Background policy optimization job management |
 | `persistence/checkpoint.py` | Checkpoint creation, save, and load |

@@ -24,7 +24,18 @@ from crucis.execution.optimizer import (
 )
 from crucis.models import CheckpointState, ParsedObjective, TaskObjective, VerificationGranularity
 from crucis.persistence.policy import candidate_policy_path, lock_path, queue_dir
-from crucis.persistence.settings import load_runtime_settings
+from crucis.persistence.settings import load_runtime_settings, save_runtime_settings
+
+
+def _enable_optimizer(workspace: Path) -> None:
+    """Write settings with optimizer enabled for test workspaces.
+
+    Args:
+        workspace: Workspace root directory.
+    """
+    settings = load_runtime_settings(workspace)
+    settings.optimizer.enabled = True
+    save_runtime_settings(settings, workspace)
 
 
 def _objective() -> ParsedObjective:
@@ -76,6 +87,7 @@ def test_enqueue_background_optimization_writes_queue_job(tmp_path: Path, monkey
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest monkeypatch fixture.
     """
+    _enable_optimizer(tmp_path)
     monkeypatch.setattr(
         "crucis.execution.optimizer.spawn_optimizer_worker",
         lambda _workspace: True,
@@ -104,6 +116,7 @@ def test_enqueue_background_optimization_uses_custom_profiles_path(tmp_path: Pat
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest monkeypatch fixture.
     """
+    _enable_optimizer(tmp_path)
     monkeypatch.setattr(
         "crucis.execution.optimizer.spawn_optimizer_worker",
         lambda _workspace: True,
@@ -132,6 +145,7 @@ def test_run_optimizer_worker_skips_when_lock_exists(tmp_path: Path, monkeypatch
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest monkeypatch fixture.
     """
+    _enable_optimizer(tmp_path)
     monkeypatch.setattr(
         "crucis.execution.optimizer.spawn_optimizer_worker",
         lambda _workspace: True,
@@ -161,6 +175,7 @@ def test_run_optimizer_worker_recovers_stale_lock(tmp_path: Path, monkeypatch):
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest monkeypatch fixture.
     """
+    _enable_optimizer(tmp_path)
     monkeypatch.setattr(
         "crucis.execution.optimizer.spawn_optimizer_worker",
         lambda _workspace: True,
@@ -201,6 +216,7 @@ def test_run_optimizer_worker_recovers_lock_when_pid_command_mismatch(tmp_path: 
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest monkeypatch fixture.
     """
+    _enable_optimizer(tmp_path)
     monkeypatch.setattr(
         "crucis.execution.optimizer.spawn_optimizer_worker",
         lambda _workspace: True,

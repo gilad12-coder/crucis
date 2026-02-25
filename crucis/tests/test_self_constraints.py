@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from crucis.constraints.checker import check_constraints
+from crucis.constraints.loader import _normalize_profile_data
 from crucis.models import ConstraintSet, TaskConstraints
 
 
@@ -17,9 +18,10 @@ def orchestrator_constraints():
     constraints_path = Path(__file__).parent.parent.parent / "constraints" / "crucis.yaml"
     with open(constraints_path) as f:
         data = yaml.safe_load(f)
+    normalized = _normalize_profile_data(data)
     return TaskConstraints(
-        primary=ConstraintSet(**data.get("primary", {})),
-        secondary=ConstraintSet(**data.get("secondary", {})),
+        primary=ConstraintSet(**normalized.get("primary", {})),
+        secondary=ConstraintSet(**normalized.get("secondary", {})),
         target_files=data.get("target_files", []),
     )
 

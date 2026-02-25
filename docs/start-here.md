@@ -1,6 +1,6 @@
 # Start Here
 
-Crucis is a verification-first coding loop. It generates tests, attacks them adversarially, and only then lets an implementation agent write code. The result: generated code that actually works beyond the examples you gave it.
+Crucis is an autonomy scaffold for code-generating agents. It provides structured automated feedback — tests, adversarial review, constraints, holdout verification — so agents can iterate longer without human intervention. The result: generated code that actually works beyond the examples you gave it.
 
 ## Is Crucis for me?
 
@@ -45,6 +45,12 @@ This checks Python version, agent binaries, API keys, Docker availability, and r
     ```bash
     ./crucis-dev doctor --workspace .
     ```
+
+## What `crucis init` creates
+
+By default, `crucis init` creates only two files: `objective.yaml` and `src/solution.py`. Profiles and settings are optional — add them with `--with-profiles` or `--with-settings`. Settings are auto-created on first `crucis run` if they don't exist.
+
+You don't need to manually split examples into train and holdout sets. Just list your examples under `examples:` and Crucis automatically holds out the last ~20% for verification. If you need manual control, you can still use an explicit `holdout:` field. Use `holdout: []` to opt out of holdout verification entirely.
 
 ## Next step
 

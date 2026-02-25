@@ -1,5 +1,7 @@
 # Background Optimizer
 
+> **Experimental.** The optimizer is disabled by default. To enable it, set `optimizer: enabled: true` in `.crucis/settings.yaml`. See [Enabling the optimizer](#enabling-the-optimizer) below.
+
 Crucis includes a background policy optimizer powered by [GEPA](https://github.com/gilad12-coder/gepa) that improves prompt steering over time. After each `fit` or `evaluate` run, Crucis queues an optimization job that scores candidate policies against a baseline using black-box evaluation.
 
 ## How It Works
@@ -140,7 +142,7 @@ All optimizer settings live in `.crucis/settings.yaml` under the `optimizer` key
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `true` | Enable/disable background optimization |
+| `enabled` | `false` | Enable/disable background optimization |
 | `max_metric_calls` | `24` | Max scoring evaluations per run |
 | `reflection_lm` | `openai/gpt-5.2` | LLM used for GEPA reflection |
 | `train_split_ratio` | `0.7` | Train/validation split for examples |
@@ -166,15 +168,25 @@ optimizer:
   evaluator_timeout_sec: 180
 ```
 
+## Enabling the Optimizer
+
+The optimizer is experimental and disabled by default. To enable it, add the `optimizer` block to `.crucis/settings.yaml`:
+
+```yaml
+schema_version: 1
+optimizer:
+  enabled: true
+```
+
+You can also scaffold the settings file with `crucis init --with-settings` and then add the optimizer block manually.
+
 ## Disabling the Optimizer
 
-Set the environment variable to skip optimization entirely:
+Set `enabled: false` in `.crucis/settings.yaml`, or set the environment variable to skip optimization entirely:
 
 ```bash
 CRUCIS_DISABLE_BACKGROUND_OPTIMIZER=1 crucis run
 ```
-
-Or set `enabled: false` in `.crucis/settings.yaml`.
 
 ## Policy Override
 

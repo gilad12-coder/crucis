@@ -4,6 +4,7 @@ from pathlib import Path
 
 import yaml
 
+from crucis.constraints.registry import SOFT_CONSTRAINT_FIELDS
 from crucis.defaults import TEXT_ENCODING
 from crucis.models import ConstraintSet, ParsedObjective, TaskConstraints
 
@@ -11,6 +12,40 @@ _TASKS_KEY = "tasks"
 _GUIDANCE_KEY = "guidance"
 _CUSTOM_CHECKS_KEY = "custom_checks"
 _SCOPE_TESTS = "tests"
+_PRIMARY_KEY = "primary"
+_SECONDARY_KEY = "secondary"
+
+_CONSTRAINT_FIELDS: frozenset[str] = frozenset(ConstraintSet.model_fields)
+
+
+def _normalize_profile_data(data: dict) -> dict:
+    """Split flat constraint fields into primary/secondary using the registry.
+
+    If data already contains ``primary`` or ``secondary`` keys the old nested
+    format is assumed and passed through unchanged.  Otherwise each field is
+    classified as required (primary) or advisory (secondary) based on
+    :data:`SOFT_CONSTRAINT_FIELDS`.
+
+    Args:
+        data: Profile-level or task-override constraint dict.
+
+    Returns:
+        Dict with ``primary`` and ``secondary`` sub-dicts plus any pass-through keys.
+    """
+    if _PRIMARY_KEY in data or _SECONDARY_KEY in data:
+        return data
+
+    primary: dict = {}
+    secondary: dict = {}
+    rest: dict = {}
+    for key, value in data.items():
+        if key in SOFT_CONSTRAINT_FIELDS:
+            secondary[key] = value
+        elif key in _CONSTRAINT_FIELDS:
+            primary[key] = value
+        else:
+            rest[key] = value
+    return {_PRIMARY_KEY: primary, _SECONDARY_KEY: secondary, **rest}
 
 
 def load_profiles(profiles_path: Path) -> dict:
@@ -25,7 +60,12 @@ def load_profiles(profiles_path: Path) -> dict:
     try:
         raw = profiles_path.read_text(encoding=TEXT_ENCODING)
     except FileNotFoundError:
-        raise ValueError(f"Profiles file not found: {profiles_path}") from None
+        from crucis.intake.scaffold import _DEFAULT_PROFILES
+
+        data = _DEFAULT_PROFILES
+        profiles = dict(data.get("profiles", {}))
+        profiles[_TASKS_KEY] = data.get(_TASKS_KEY, {})
+        return profiles
     try:
         data = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
@@ -94,18 +134,19 @@ def resolve_constraints(
             f"Available: {', '.join(available) or '(none)'}"
         )
 
+    normalized = _normalize_profile_data(profile_data)
     base_constraints = TaskConstraints(
-        primary=ConstraintSet(**profile_data.get("primary", {})),
-        secondary=ConstraintSet(**profile_data.get("secondary", {})),
+        primary=ConstraintSet(**normalized.get(_PRIMARY_KEY, {})),
+        secondary=ConstraintSet(**normalized.get(_SECONDARY_KEY, {})),
         target_files=_resolve_target_files(objective, task_name),
-        guidance=list(profile_data.get(_GUIDANCE_KEY) or []),
+        guidance=list(normalized.get(_GUIDANCE_KEY) or []),
     )
 
     resolved_task = task_name or objective.name
     task_overrides = profiles.get(_TASKS_KEY, {}).get(resolved_task)
     if not task_overrides:
         return base_constraints
-    return _merge_task_overrides(base_constraints, task_overrides)
+    return _merge_task_overrides(base_constraints, _normalize_profile_data(task_overrides))
 
 
 def _select_profile_name(
@@ -177,10 +218,10 @@ def _merge_task_overrides(constraints: TaskConstraints, overrides: dict) -> Task
         Computed text result for this operation.
     """
     primary_data = constraints.primary.model_dump()
-    primary_data.update(overrides.get("primary", {}))
+    primary_data.update(overrides.get(_PRIMARY_KEY, {}))
 
     secondary_data = constraints.secondary.model_dump()
-    secondary_data.update(overrides.get("secondary", {}))
+    secondary_data.update(overrides.get(_SECONDARY_KEY, {}))
 
     guidance = list(constraints.guidance)
     if _GUIDANCE_KEY in overrides:

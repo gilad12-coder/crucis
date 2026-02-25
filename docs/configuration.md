@@ -26,6 +26,8 @@ Crucis maintains a workspace-local settings file at `.crucis/settings.yaml`, cre
 
 ### Optimizer Settings
 
+The optimizer is disabled by default. To enable it, add `optimizer: enabled: true` to `.crucis/settings.yaml`:
+
 ```yaml
 schema_version: 1
 optimizer:
@@ -41,6 +43,12 @@ optimizer:
   promotion_mode: manual
   queue_max_jobs: 64
   capture_stdio: true
+```
+
+When the optimizer is disabled (the default), `crucis init` does not include the `optimizer` block in `settings.yaml`. The minimal default `settings.yaml` is:
+
+```yaml
+schema_version: 1
 ```
 
 `max_metric_calls` is intentionally user-controlled here so budget can be tuned per workspace without changing CLI commands.
@@ -75,7 +83,7 @@ Run `crucis doctor` to detect agent/model mismatches (e.g. a Claude agent config
 ## Constraint Profiles
 
 Constraint profiles are loaded from `constraints/profiles.yaml` (or a custom file via `--profiles`).
-Each profile defines `primary` and `secondary` gates plus optional guidance that shape train-suite generation. See [Constraints Reference](constraints-reference.md) for all 34 available constraints.
+Each profile lists constraints flat -- they are auto-classified into required (blocking) or advisory based on the field type. The old nested `primary:`/`secondary:` format still works for backward compatibility. See [Constraints Reference](constraints-reference.md) for all 34 available constraints and the list of advisory fields.
 
 ## Color and Output
 

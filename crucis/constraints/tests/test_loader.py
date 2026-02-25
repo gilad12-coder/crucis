@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crucis.constraints.loader import extract_custom_checks, load_profiles, resolve_constraints
+from crucis.constraints.loader import (
+    _normalize_profile_data,
+    extract_custom_checks,
+    load_profiles,
+    resolve_constraints,
+)
 from crucis.models import ParsedObjective, TaskObjective
 
 PROFILES = {
@@ -207,15 +212,15 @@ def test_resolve_constraints_task_override_per_scope(tmp_path):
     assert impl_resolved.primary.max_cyclomatic_complexity == 10
 
 
-def test_load_profiles_missing_file_raises_valueerror(tmp_path):
-    """Missing profiles file should raise ValueError with clear message.
+def test_load_profiles_missing_file_returns_defaults(tmp_path):
+    """Missing profiles file should return built-in default profiles.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
     """
-    with pytest.raises(ValueError) as exc:
-        load_profiles(tmp_path / "nonexistent.yaml")
-    assert "not found" in str(exc.value)
+    profiles = load_profiles(tmp_path / "nonexistent.yaml")
+    assert "recommended" in profiles
+    assert "default" in profiles
 
 
 def test_load_profiles_malformed_yaml_raises_valueerror(tmp_path):
@@ -321,3 +326,79 @@ def test_extract_custom_checks_returns_none_when_absent(tmp_path):
     )
     result = extract_custom_checks(objective, profiles)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Flat constraint format normalization
+# ---------------------------------------------------------------------------
+
+FLAT_PROFILES = {
+    "profiles": {
+        "default": {
+            "max_cyclomatic_complexity": 10,
+            "require_docstrings": True,
+            "guidance": ["keep it simple"],
+        },
+    },
+    "tasks": {},
+}
+
+
+def _write_flat_profiles(tmp_path: Path) -> Path:
+    """Write flat-format profiles to a temp YAML file.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+
+    Returns:
+        Path to the written profiles file.
+    """
+    path = tmp_path / "profiles.yaml"
+    path.write_text(yaml.safe_dump(FLAT_PROFILES), encoding="utf-8")
+    return path
+
+
+def test_normalize_splits_flat_fields():
+    """Flat constraint fields should be split into primary and secondary."""
+    data = {
+        "max_cyclomatic_complexity": 10,
+        "require_docstrings": True,
+        "no_magic_numbers": True,
+        "guidance": ["be clean"],
+    }
+    result = _normalize_profile_data(data)
+    assert result["primary"]["max_cyclomatic_complexity"] == 10
+    assert result["primary"]["no_magic_numbers"] is True
+    assert result["secondary"]["require_docstrings"] is True
+    assert result["guidance"] == ["be clean"]
+    assert "max_cyclomatic_complexity" not in result["secondary"]
+    assert "require_docstrings" not in result["primary"]
+
+
+def test_normalize_passes_through_old_format():
+    """Old primary/secondary format should pass through unchanged."""
+    data = {
+        "primary": {"max_cyclomatic_complexity": 10},
+        "secondary": {"require_docstrings": True},
+    }
+    result = _normalize_profile_data(data)
+    assert result is data
+
+
+def test_resolve_constraints_flat_format(tmp_path):
+    """Flat-format profiles should resolve correctly into TaskConstraints.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    profiles = load_profiles(_write_flat_profiles(tmp_path))
+    objective = ParsedObjective(
+        name="demo",
+        description="Demo",
+        tests_constraint_profile="default",
+        target_files=["src/demo.py"],
+    )
+    resolved = resolve_constraints(objective, profiles, scope="tests")
+    assert resolved.primary.max_cyclomatic_complexity == 10
+    assert resolved.secondary.require_docstrings is True
+    assert resolved.guidance == ["keep it simple"]

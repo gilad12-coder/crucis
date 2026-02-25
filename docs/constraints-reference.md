@@ -2,10 +2,14 @@
 
 34 constraints are available, all mechanically checked via Python AST analysis. No runtime execution needed.
 
-Use any combination in `primary` or `secondary` gates in your constraint profiles (`constraints/profiles.yaml`).
+List constraints flat in your profiles (`constraints/profiles.yaml`). They are auto-classified into **required** (blocking) or **advisory** based on the field type.
 
-- **Primary constraints** — hard gates. Violations cause regeneration.
-- **Secondary constraints** — soft gates. Violations are reported but don't block.
+- **Required constraints** — hard gates. Violations cause regeneration.
+- **Advisory constraints** — soft gates. Violations are reported but don't block.
+
+The following fields are advisory (all others are required): `require_docstrings`, `no_print_statements`, `no_debugger_statements`, `no_global_state`, `require_type_annotations`, `no_nested_imports`, `no_star_imports`, `max_local_variables`.
+
+The old nested `primary:`/`secondary:` format still works for backward compatibility, but the flat format is preferred.
 
 ---
 
@@ -86,8 +90,7 @@ Prevent common vulnerability patterns.
 ```yaml
 profiles:
   minimal:
-    primary:
-      max_cyclomatic_complexity: 15
+    max_cyclomatic_complexity: 15
 ```
 
 ### Recommended
@@ -95,22 +98,20 @@ profiles:
 ```yaml
 profiles:
   recommended:
-    primary:
-      max_cyclomatic_complexity: 10
-      max_cognitive_complexity: 15
-      max_lines_per_function: 50
-      max_parameters: 5
-      max_nested_depth: 4
-      no_bare_except: true
-      no_unreachable_code: true
-      no_mutable_defaults: true
-      no_eval: true
-      no_exec: true
-    secondary:
-      require_docstrings: true
-      no_print_statements: true
-      no_debugger_statements: true
-      no_magic_numbers: true
+    max_cyclomatic_complexity: 10
+    max_cognitive_complexity: 15
+    max_lines_per_function: 50
+    max_parameters: 5
+    max_nested_depth: 4
+    no_bare_except: true
+    no_unreachable_code: true
+    no_mutable_defaults: true
+    no_eval: true
+    no_exec: true
+    require_docstrings: true        # advisory
+    no_print_statements: true        # advisory
+    no_debugger_statements: true     # advisory
+    no_magic_numbers: true
 ```
 
 ### Strict
@@ -118,38 +119,36 @@ profiles:
 ```yaml
 profiles:
   strict:
-    primary:
-      max_cyclomatic_complexity: 5
-      max_cognitive_complexity: 8
-      max_lines_per_function: 30
-      max_parameters: 3
-      max_nested_depth: 3
-      max_return_statements: 4
-      max_local_variables: 5
-      max_time_complexity: "O(n)"
-      no_bare_except: true
-      no_try_except_pass: true
-      no_return_in_finally: true
-      no_unreachable_code: true
-      no_duplicate_dict_keys: true
-      no_loop_variable_closure: true
-      no_mutable_defaults: true
-      no_mutable_call_in_defaults: true
-      no_shadowing_builtins: true
-      no_open_without_context_manager: true
-      no_eval: true
-      no_exec: true
-      no_unsafe_deserialization: true
-      no_unsafe_yaml: true
-      no_shell_true: true
-      no_hardcoded_secrets: true
-      no_requests_without_timeout: true
-    secondary:
-      require_docstrings: true
-      require_type_annotations: true
-      no_print_statements: true
-      no_star_imports: true
-      no_global_state: true
-      no_debugger_statements: true
-      no_nested_imports: true
+    max_cyclomatic_complexity: 5
+    max_cognitive_complexity: 8
+    max_lines_per_function: 30
+    max_parameters: 3
+    max_nested_depth: 3
+    max_return_statements: 4
+    max_local_variables: 5           # advisory
+    max_time_complexity: "O(n)"
+    no_bare_except: true
+    no_try_except_pass: true
+    no_return_in_finally: true
+    no_unreachable_code: true
+    no_duplicate_dict_keys: true
+    no_loop_variable_closure: true
+    no_mutable_defaults: true
+    no_mutable_call_in_defaults: true
+    no_shadowing_builtins: true
+    no_open_without_context_manager: true
+    no_eval: true
+    no_exec: true
+    no_unsafe_deserialization: true
+    no_unsafe_yaml: true
+    no_shell_true: true
+    no_hardcoded_secrets: true
+    no_requests_without_timeout: true
+    require_docstrings: true         # advisory
+    require_type_annotations: true   # advisory
+    no_print_statements: true        # advisory
+    no_star_imports: true            # advisory
+    no_global_state: true            # advisory
+    no_debugger_statements: true     # advisory
+    no_nested_imports: true          # advisory
 ```

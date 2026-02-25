@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crucis.intake.objective import parse_objective
+from crucis.intake.objective import _auto_holdout_split, parse_objective
 
 
 def _write(path: Path, data: dict) -> Path:
@@ -431,3 +431,169 @@ def test_parse_objective_pydantic_error_is_human_readable(tmp_path):
     with pytest.raises(ValueError) as exc:
         parse_objective(objective_file)
     assert "Invalid objective" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Auto-holdout tests
+# ---------------------------------------------------------------------------
+
+
+def _example(n: int) -> dict:
+    """Build a dummy example dict.
+
+    Args:
+        n: Numeric seed for input/output values.
+
+    Returns:
+        Example dict with input and output strings.
+    """
+    return {"input": f"({n},)", "output": str(n * 10)}
+
+
+def test_auto_holdout_split_five_examples():
+    """Five examples should produce 4 train + 1 holdout."""
+    examples = [_example(i) for i in range(5)]
+    train, holdout = _auto_holdout_split(examples)
+    assert len(train) == 4
+    assert len(holdout) == 1
+    assert holdout[0] == examples[4]
+
+
+def test_auto_holdout_split_ten_examples():
+    """Ten examples should produce 8 train + 2 holdout."""
+    examples = [_example(i) for i in range(10)]
+    train, holdout = _auto_holdout_split(examples)
+    assert len(train) == 8
+    assert len(holdout) == 2
+
+
+def test_auto_holdout_split_two_examples():
+    """Two examples should produce 1 train + 1 holdout."""
+    examples = [_example(i) for i in range(2)]
+    train, holdout = _auto_holdout_split(examples)
+    assert len(train) == 1
+    assert len(holdout) == 1
+
+
+def test_auto_holdout_split_single_example():
+    """A single example should not be split."""
+    examples = [_example(0)]
+    train, holdout = _auto_holdout_split(examples)
+    assert len(train) == 1
+    assert len(holdout) == 0
+
+
+def test_auto_holdout_split_empty():
+    """Empty list should return empty train and holdout."""
+    train, holdout = _auto_holdout_split([])
+    assert train == []
+    assert holdout == []
+
+
+def test_auto_holdout_applies_during_parse(tmp_path):
+    """Parsing with examples but no holdout should auto-split.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "factorial",
+            "description": "Return n!",
+            "examples": [_example(i) for i in range(5)],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.train_evals) == 4
+    assert len(result.holdout_evals) == 1
+
+
+def test_auto_holdout_skipped_when_explicit_holdout_present(tmp_path):
+    """Explicit holdout should prevent auto-splitting.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "factorial",
+            "description": "Return n!",
+            "examples": [_example(i) for i in range(5)],
+            "holdout": [{"input": "(99,)", "output": "99"}],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.train_evals) == 5
+    assert len(result.holdout_evals) == 1
+    assert result.holdout_evals[0].input == "(99,)"
+
+
+def test_auto_holdout_skipped_when_explicit_empty_holdout(tmp_path):
+    """Explicit empty holdout is an opt-out signal.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "factorial",
+            "description": "Return n!",
+            "examples": [_example(i) for i in range(5)],
+            "holdout": [],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.train_evals) == 5
+    assert len(result.holdout_evals) == 0
+
+
+def test_auto_holdout_applies_per_task(tmp_path):
+    """Auto-holdout should work at the task level.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "math",
+            "description": "Math ops",
+            "tasks": [
+                {
+                    "name": "add",
+                    "examples": [_example(i) for i in range(5)],
+                },
+            ],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.tasks[0].train_evals) == 4
+    assert len(result.tasks[0].holdout_evals) == 1
+
+
+def test_auto_holdout_task_skipped_when_task_has_explicit_holdout(tmp_path):
+    """Task with explicit holdout should not be auto-split.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    objective_file = _write(
+        tmp_path / "objective.yaml",
+        {
+            "name": "math",
+            "description": "Math ops",
+            "tasks": [
+                {
+                    "name": "add",
+                    "examples": [_example(i) for i in range(5)],
+                    "holdout": [{"input": "(77,)", "output": "77"}],
+                },
+            ],
+        },
+    )
+    result = parse_objective(objective_file)
+    assert len(result.tasks[0].train_evals) == 5
+    assert len(result.tasks[0].holdout_evals) == 1

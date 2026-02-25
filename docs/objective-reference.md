@@ -11,8 +11,9 @@ Crucis reads YAML objective files with strict keys. Legacy keys are rejected at 
 | `signature` | no | `str` | — | Callable signature hint (e.g. `add(a: int, b: int) -> int`) |
 | `train_evals` | no | `list` | `[]` | Visible evaluation cases shown to generation and critic agents |
 | `holdout_evals` | no | `list` | `[]` | Hidden evaluation cases used only in final verification |
-| `tests_constraint_profile` | no | `str` | `default` | Profile name from `constraints/profiles.yaml` for generated tests |
-| `implementation_constraint_profile` | no | `str` | `default` | Profile name for implementation code |
+| `tests_constraint_profile` | no | `str` | `default` | Profile name from `constraints/profiles.yaml` for generated tests (constraints auto-classified as required or advisory) |
+| `implementation_constraint_profile` | no | `str` | `default` | Profile name for implementation code (constraints auto-classified as required or advisory) |
+| `behaviors` | no | `list[str]` | `[]` | Expected behavioral properties (e.g. `"idempotent"`, `"thread-safe"`) |
 | `target_files` | no | `list[str]` | `[]` | Files the implementation agent should write |
 | `context_files` | no | `list[str]` | `[]` | Existing files injected into generation and evaluation prompts |
 | `existing_tests` | no | `list[str]` | `[]` | Test files run as a regression gate during evaluation |
@@ -28,6 +29,7 @@ Each entry in `tasks` supports:
 | `name` | yes | `str` | — | Task name (must be a valid Python identifier) |
 | `description` | no | `str` | `""` | Task description (falls back to top-level) |
 | `signature` | no | `str` | — | Task signature (falls back to top-level) |
+| `behaviors` | no | `list[str]` | `[]` | Task-specific behavioral properties |
 | `train_evals` | no | `list` | falls back | Task-specific train evals |
 | `holdout_evals` | no | `list` | falls back | Task-specific holdout evals |
 | `tests_constraint_profile` | no | `str` | falls back | Task-specific test constraint profile |
@@ -50,6 +52,8 @@ train_evals:
 
 - `input` — Python expression representing call arguments as a tuple (e.g. `"(1, 2)"` means `func(1, 2)`)
 - `output` — Python expression representing the expected return value
+
+**Auto-holdout:** If you only provide `examples` (or `train_evals`) without a `holdout_evals` key, Crucis automatically splits the last ~20% as holdout evals. To provide explicit holdout evals, add a `holdout:` key. To opt out of auto-holdout, set `holdout: []`.
 
 **Holdout evals** have stricter requirements:
 

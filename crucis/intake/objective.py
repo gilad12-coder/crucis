@@ -34,6 +34,53 @@ _FIELD_ALIASES = {
     HOLDOUT_KEY: HOLDOUT_EVALS_KEY,
 }
 
+_HOLDOUT_FRACTION = 0.2
+_HOLDOUT_MIN_COUNT = 1
+
+
+def _auto_holdout_split(
+    examples: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Split examples into train and holdout sets deterministically.
+
+    Withholds the last ~20% (minimum 1) as holdout. Returns the full list
+    unchanged when there are fewer than 2 examples.
+
+    Args:
+        examples: List of example dicts with input/output keys.
+
+    Returns:
+        Tuple of (train_examples, holdout_examples).
+    """
+    if len(examples) < 2:
+        return list(examples), []
+    holdout_count = max(_HOLDOUT_MIN_COUNT, int(len(examples) * _HOLDOUT_FRACTION))
+    split_idx = len(examples) - holdout_count
+    return examples[:split_idx], examples[split_idx:]
+
+
+def _apply_auto_holdout(data: dict) -> None:
+    """Auto-split examples into train/holdout when no explicit holdout exists.
+
+    Mutates *data* in place. Skips when holdout_evals is already present
+    (even if empty — empty list is an explicit opt-out).
+
+    Args:
+        data: Normalized objective dict (aliases already resolved).
+    """
+    if HOLDOUT_EVALS_KEY not in data:
+        train = data.get(TRAIN_EVALS_KEY) or []
+        if train:
+            data[TRAIN_EVALS_KEY], data[HOLDOUT_EVALS_KEY] = _auto_holdout_split(train)
+
+    for task in data.get(_TASKS_KEY) or []:
+        if not isinstance(task, dict):
+            continue
+        if HOLDOUT_EVALS_KEY not in task:
+            task_train = task.get(TRAIN_EVALS_KEY) or []
+            if task_train:
+                task[TRAIN_EVALS_KEY], task[HOLDOUT_EVALS_KEY] = _auto_holdout_split(task_train)
+
 
 def _normalize_field_aliases(data: dict) -> None:
     """Rewrite user-facing field aliases to internal canonical names.
@@ -86,6 +133,7 @@ def parse_objective(objective_path: Path) -> ParsedObjective:
         raise ValueError("Objective file must contain a top-level mapping")
 
     _normalize_field_aliases(data)
+    _apply_auto_holdout(data)
     _assert_valid_objective_shape(data)
     _assert_valid_eval_entries(data)
 

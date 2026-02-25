@@ -156,22 +156,38 @@ class WorkspaceContext:
 
     @property
     def objective_path(self) -> Path:
-        """Default objective file path."""
+        """Default objective file path.
+
+        Returns:
+            Resolved objective path within the workspace.
+        """
         return self.workspace / _OBJECTIVE_FILENAME
 
     @property
     def profiles_path(self) -> Path:
-        """Default constraint profiles file path."""
+        """Default constraint profiles file path.
+
+        Returns:
+            Resolved profiles path within the workspace.
+        """
         return self.workspace / DEFAULT_PROFILES_PATH
 
     @property
     def checkpoint_path(self) -> Path:
-        """Default checkpoint file path."""
+        """Default checkpoint file path.
+
+        Returns:
+            Resolved checkpoint path within the workspace.
+        """
         return self.workspace / DEFAULT_CHECKPOINT_PATH
 
     @property
     def has_objective(self) -> bool:
-        """Whether objective.yaml exists in the workspace."""
+        """Whether objective.yaml exists in the workspace.
+
+        Returns:
+            True when the objective file is present.
+        """
         return self.objective_path.exists()
 
 

@@ -36,23 +36,6 @@ _EXISTING_CODEBASE_SCAN_SKIP_DIRS = frozenset(
 _SETTINGS_TEMPLATE = """\
 schema_version: 1
 
-# Background optimizer (optional — requires an API key for the reflection_lm provider).
-# The optimizer refines generation prompts after each fit run.
-optimizer:
-  enabled: false
-  reflection_lm: openai/gpt-5.2
-  reflection_api_key: null
-  max_metric_calls: 24
-  train_split_ratio: 0.7
-  max_examples_per_run: 24
-  evaluator_timeout_sec: 180
-  pass_weight: 0.9
-  speed_weight: 0.1
-  min_score_delta: 0.01
-  promotion_mode: manual  # "manual" or "auto"
-  queue_max_jobs: 64
-  capture_stdio: true
-
 # Agent configuration. Valid agents: claude, codex
 # Leave null to use defaults (claude / claude-opus-4-6).
 # Model defaults per agent:
@@ -159,21 +142,13 @@ def _render_settings_template(
 
 _TEMPLATES: dict[str, dict] = {
     "factorial": {
-        "description": "Compute the factorial of a non-negative integer.",
+        "description": "Return n! for non-negative n. Raise ValueError for negative input.",
         "signature": "factorial(n: int) -> int",
-        "tasks": [
-            {
-                "name": "factorial",
-                "description": "Return n! for non-negative n. "
-                "Raise ValueError for negative input.",
-                "signature": "factorial(n: int) -> int",
-                "examples": [
-                    {"input": "(0,)", "output": "1"},
-                    {"input": "(1,)", "output": "1"},
-                    {"input": "(5,)", "output": "120"},
-                    {"input": "(10,)", "output": "3628800"},
-                ],
-            }
+        "examples": [
+            {"input": "(0,)", "output": "1"},
+            {"input": "(1,)", "output": "1"},
+            {"input": "(5,)", "output": "120"},
+            {"input": "(10,)", "output": "3628800"},
         ],
     },
     "calculator": {
@@ -230,18 +205,10 @@ def _build_existing_codebase_objective(name: str) -> dict:
         "tests_constraint_profile": _RECOMMENDED_PROFILE,
         "implementation_constraint_profile": "default",
         "target_files": [],
-        "tasks": [
-            {
-                "name": name,
-                "description": "Implement the requested behavior in existing project files.",
-                "signature": None,
-                "target_files": [],
-                "context_files": [],
-                "existing_tests": [],
-                "examples": [{"input": "(...)", "output": "..."}],
-                "holdout": [],
-            }
-        ],
+        "context_files": [],
+        "existing_tests": [],
+        "examples": [{"input": "(...)", "output": "..."}],
+        "holdout": [],
     }
 
 
@@ -274,46 +241,31 @@ def _build_objective(name: str, existing_codebase: bool = False) -> dict:
         "tests_constraint_profile": _RECOMMENDED_PROFILE,
         "implementation_constraint_profile": _RECOMMENDED_PROFILE,
         "target_files": ["src/solution.py"],
-        "tasks": [
-            {
-                "name": name,
-                "description": f"Implement {name}. Replace this with a real description.",
-                "signature": f"{name}(x: Any) -> Any",
-                "examples": [
-                    {"input": "(1,)", "output": "1"},
-                ],
-                "holdout": [],
-            }
+        "examples": [
+            {"input": "(1,)", "output": "1"},
         ],
+        "holdout": [],
     }
 
 
 _DEFAULT_PROFILES = {
     "profiles": {
         "default": {
-            "primary": {
-                "max_cyclomatic_complexity": 10,
-            },
-            "secondary": {
-                "require_docstrings": True,
-            },
+            "max_cyclomatic_complexity": 10,
+            "require_docstrings": True,
         },
         "recommended": {
-            "primary": {
-                "max_cyclomatic_complexity": 10,
-                "max_lines_per_function": 50,
-                "max_parameters": 5,
-                "max_nested_depth": 4,
-                "no_bare_except": True,
-                "no_mutable_defaults": True,
-                "no_eval": True,
-                "no_exec": True,
-            },
-            "secondary": {
-                "require_docstrings": True,
-                "no_print_statements": True,
-                "no_magic_numbers": True,
-            },
+            "max_cyclomatic_complexity": 10,
+            "max_lines_per_function": 50,
+            "max_parameters": 5,
+            "max_nested_depth": 4,
+            "no_bare_except": True,
+            "no_mutable_defaults": True,
+            "no_eval": True,
+            "no_exec": True,
+            "require_docstrings": True,
+            "no_print_statements": True,
+            "no_magic_numbers": True,
         },
     },
     "functions": {},
@@ -346,6 +298,8 @@ def scaffold_workspace(
     existing_codebase: bool | None = None,
     agent: str | None = None,
     model: str | None = None,
+    include_profiles: bool = False,
+    include_settings: bool = False,
 ) -> list[Path]:
     """Create starter files for a new Crucis workspace.
 
@@ -358,6 +312,8 @@ def scaffold_workspace(
             When None, mode is auto-detected from existing Python files.
         agent: Agent name to write into settings.yaml, or None for null.
         model: Model name to write into settings.yaml, or None for null.
+        include_profiles: When True, create constraints/profiles.yaml.
+        include_settings: When True, create .crucis/settings.yaml.
 
     Returns:
         List of file paths that were created.
@@ -377,22 +333,26 @@ def scaffold_workspace(
         )
         created.append(objective_path)
 
-    profiles_path = workspace / _PROFILES_DIR / _PROFILES_FILENAME
-    if not profiles_path.exists():
-        profiles_path.parent.mkdir(parents=True, exist_ok=True)
-        profiles_path.write_text(
-            yaml.safe_dump(_DEFAULT_PROFILES, sort_keys=False),
-            encoding=TEXT_ENCODING,
-        )
-        created.append(profiles_path)
+    if include_profiles:
+        profiles_path = workspace / _PROFILES_DIR / _PROFILES_FILENAME
+        if not profiles_path.exists():
+            profiles_path.parent.mkdir(parents=True, exist_ok=True)
+            profiles_path.write_text(
+                yaml.safe_dump(_DEFAULT_PROFILES, sort_keys=False),
+                encoding=TEXT_ENCODING,
+            )
+            created.append(profiles_path)
 
-    from crucis.persistence.settings import settings_path
+    if include_settings:
+        from crucis.persistence.settings import settings_path
 
-    settings_file = settings_path(workspace)
-    if not settings_file.exists():
-        settings_file.parent.mkdir(parents=True, exist_ok=True)
-        settings_file.write_text(_render_settings_template(agent, model), encoding=TEXT_ENCODING)
-        created.append(settings_file)
+        settings_file = settings_path(workspace)
+        if not settings_file.exists():
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            settings_file.write_text(
+                _render_settings_template(agent, model), encoding=TEXT_ENCODING,
+            )
+            created.append(settings_file)
 
     if not existing_mode:
         target_dir = workspace / "src"
@@ -423,43 +383,35 @@ _PROJECT_TYPE_PROFILES: dict[str, str] = {
 _BUILTIN_PROFILES = """\
 profiles:
   default:
-    primary:
-      max_cyclomatic_complexity: 10
-    secondary:
-      require_docstrings: true
+    max_cyclomatic_complexity: 10
+    require_docstrings: true
 
   strict:
-    primary:
-      max_cyclomatic_complexity: 5
-      max_lines_per_function: 30
-    secondary:
-      require_docstrings: true
+    max_cyclomatic_complexity: 5
+    max_lines_per_function: 30
+    require_docstrings: true
 
   recommended:
-    primary:
-      max_cyclomatic_complexity: 10
-      max_cognitive_complexity: 15
-      max_lines_per_function: 50
-      max_parameters: 5
-      max_nested_depth: 4
-      no_bare_except: true
-      no_unreachable_code: true
-      no_mutable_defaults: true
-      no_eval: true
-      no_exec: true
-    secondary:
-      require_docstrings: true
-      no_print_statements: true
-      no_debugger_statements: true
-      no_magic_numbers: true
+    max_cyclomatic_complexity: 10
+    max_cognitive_complexity: 15
+    max_lines_per_function: 50
+    max_parameters: 5
+    max_nested_depth: 4
+    no_bare_except: true
+    no_unreachable_code: true
+    no_mutable_defaults: true
+    no_eval: true
+    no_exec: true
+    require_docstrings: true
+    no_print_statements: true
+    no_debugger_statements: true
+    no_magic_numbers: true
 
   config_hygiene:
-    primary:
-      no_magic_numbers: true
-      no_hardcoded_secrets: true
-      max_string_literal_repeats: 3
-    secondary:
-      no_global_state: true
+    no_magic_numbers: true
+    no_hardcoded_secrets: true
+    max_string_literal_repeats: 3
+    no_global_state: true
 
 functions: {}
 """
@@ -476,13 +428,20 @@ context_files:          # optional: existing files injected into prompts for con
   - src/helpers.py
 existing_tests:         # optional: test files run as a regression gate during evaluation
   - tests/test_existing.py
-tasks:
-  - name: <task_name>
-    description: <what this task does>
-    signature: <function_name(args) -> return_type>
-    examples:
-      - input: "(arg1, arg2)"
-        output: "expected_result"
+examples:
+  - input: "(arg1, arg2)"
+    output: "expected_result"
+behaviors:              # optional: natural-language behavior descriptions
+  - "Returns X when given Y"
+  - "Raises ValueError for invalid input"
+# For multi-function objectives, replace examples/signature with tasks:
+# tasks:
+#   - name: <task_name>
+#     description: <what this task does>
+#     signature: <function_name(args) -> return_type>
+#     examples:
+#       - input: "(arg1, arg2)"
+#         output: "expected_result"
 """
 
 

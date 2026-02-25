@@ -1,6 +1,6 @@
 # MCP Server
 
-Crucis ships an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes the entire TDD pipeline as tools, resources, and prompts. AI agents running inside Claude Code, OpenCode, Codex, or any MCP-compatible host can use Crucis natively without shelling out to the CLI.
+Crucis ships an [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server that exposes its autonomy scaffold as tools, resources, and prompts. AI agents running inside Claude Code, OpenCode, Codex, or any MCP-compatible host can use Crucis natively without shelling out to the CLI.
 
 ---
 
@@ -100,9 +100,9 @@ implement code → crucis_verify_implementation
 | `crucis_validate` | read-only | Validate objective.yaml structure and semantics |
 | `crucis_summary` | read-only | Pipeline status and per-task progress |
 | `crucis_doctor` | read-only | Environment and workspace diagnostics |
-| `crucis_promote` | mutating | Promote an optimizer candidate to active |
-| `crucis_optimizer_worker` | llm | Run background optimizer |
-| `crucis_check_constraints` | read-only | Check source code against constraint profiles |
+| `crucis_promote` | mutating | Promote an optimizer candidate to active (requires optimizer enabled) |
+| `crucis_optimizer_worker` | llm | Run background optimizer (requires optimizer enabled) |
+| `crucis_check_constraints` | read-only | Check source code against required/advisory constraints |
 
 ### Step-by-step tools
 
@@ -139,9 +139,9 @@ Canned workflow templates your agent can invoke.
 
 | Prompt | Description |
 |---|---|
-| `setup-crucis` | Guide: scaffold workspace and configure objective |
+| `setup-crucis` | Guide: scaffold workspace and configure objective (uses auto-holdout) |
 | `tdd-workflow` | Guide: full pipeline run with subprocess agents |
-| `verify-code-quality` | Guide: check a source file against constraints |
+| `verify-code-quality` | Guide: check a source file against required/advisory constraints |
 | `harden-tests` | Guide: run fit phase and review adversarial findings |
 | `agent-tdd-workflow` | Guide: step-by-step TDD where the agent does everything |
 
@@ -255,7 +255,7 @@ All paths can be relative (resolved against workspace) or absolute (validated to
 
 ### `crucis_init`
 
-Scaffold a new Crucis workspace with starter files. Use as the first step when starting a new project.
+Scaffold a new Crucis workspace. Creates only `objective.yaml` and `src/solution.py` by default (progressive init). Use `--with-profiles` or `--with-settings` for extras. Built-in defaults are used when optional files don't exist.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -392,7 +392,7 @@ Returns: `{"ok": bool, "checks": [{"id": "...", "status": "ok|warn|fail", "messa
 
 ### `crucis_promote`
 
-Promote an optimizer candidate policy to active. Returns the full optimizer state after promotion.
+Promote an optimizer candidate policy to active. Requires the optimizer to be enabled (`optimizer.enabled: true` in settings). Returns the full optimizer state after promotion.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -404,7 +404,7 @@ Returns: `{"run_id": "...", "promoted": true, "optimizer_state": {...}}`
 
 ### `crucis_optimizer_worker`
 
-Run the background optimizer worker.
+Run the background optimizer worker. Requires the optimizer to be enabled (`optimizer.enabled: true` in settings). The optimizer is experimental and disabled by default.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -413,7 +413,7 @@ Run the background optimizer worker.
 
 ### `crucis_check_constraints`
 
-Check Python source code against constraint profiles. Read-only static analysis. Reports primary (blocking) and secondary (advisory) results with full metrics.
+Check Python source code against constraint profiles. Read-only static analysis. Reports required (blocking) and advisory (non-blocking) results with full metrics.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|

@@ -60,18 +60,18 @@ class TestBuildGenerationPrompt:
         prompt = build_generation_prompt(minimal_spec, minimal_constraints)
         assert "1, 2" in prompt or "(1, 2)" in prompt
 
-    def test_build_generation_prompt_distinguishes_primary_and_secondary(
+    def test_build_generation_prompt_distinguishes_required_and_advisory(
         self, minimal_spec, minimal_constraints
     ):
-        """Test that build_generation_prompt labels primary and secondary sections.
+        """Test that build_generation_prompt labels required and advisory sections.
 
         Args:
             minimal_spec: Minimal ParsedObjective fixture.
             minimal_constraints: Minimal TaskConstraints fixture.
         """
         prompt = build_generation_prompt(minimal_spec, minimal_constraints)
-        assert "primary" in prompt.lower()
-        assert "secondary" in prompt.lower()
+        assert "required" in prompt.lower()
+        assert "advisory" in prompt.lower()
 
     def test_build_generation_prompt_includes_guidance(self, minimal_spec):
         """Test that build_generation_prompt includes guidance strings.

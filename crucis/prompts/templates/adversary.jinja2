@@ -1,5 +1,5 @@
 {#- Adversarial review prompt for red-team test suite analysis. -#}
-{% from "_macros.jinja2" import examples, constraints_section, policy_context %}
+{% from "_macros.jinja2" import examples, behaviors, constraints_section, policy_context %}
 You are a red-team adversary reviewing a test suite.
 
 {{ policy_context(policy, "adversary") -}}
@@ -14,6 +14,10 @@ Signature: {{ objective.signature or NOT_SPECIFIED }}
 
 Examples:
 {{ examples(objective) }}
+{% if objective.behaviors %}
+Expected behaviors:
+{{ behaviors(objective) }}
+{% endif %}
 
 {{ constraints_section(constraints) -}}
 Analyze this test suite in two passes:

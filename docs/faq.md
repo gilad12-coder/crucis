@@ -49,7 +49,9 @@ No. Docker is optional. When Docker is unavailable, Crucis runs pytest directly 
 
 ## What are holdout evals?
 
-Hidden input/output pairs that are never shown to any agent. After the implementation agent writes code, Crucis runs these pairs as a final safety net to verify the implementation generalizes beyond the training examples. See [Objective Format Reference](objective-reference.md#eval-schema).
+Hidden input/output pairs that are never shown to any agent. After the implementation agent writes code, Crucis runs these pairs as a final safety net to verify the implementation generalizes beyond the training examples.
+
+You don't need to write them manually. Just list all your examples under `examples:` and Crucis automatically reserves the last ~20% as holdout evals (auto-holdout). You can still provide an explicit `holdout:` section if you prefer full control. See [Objective Format Reference](objective-reference.md#eval-schema).
 
 ## How do I use Crucis with an existing codebase?
 
@@ -57,7 +59,11 @@ Use `crucis init --existing-codebase` and set `target_files`, `context_files`, a
 
 ## What does the optimizer do?
 
-The background optimizer (GEPA) learns better prompt strategies over time by analyzing generation outcomes across runs. It's optional and disabled by default. See [Background Optimizer](optimizer.md).
+The background optimizer (GEPA) learns better prompt strategies over time by analyzing generation outcomes across runs. It's **experimental** and **disabled by default**. To enable it, set `optimizer.enabled: true` in `.crucis/settings.yaml`. See [Background Optimizer](optimizer.md).
+
+## Do I need to write constraint profiles?
+
+No. Built-in defaults (`default` and `recommended`) are used when no `constraints/profiles.yaml` exists. You only need a custom profiles file if you want to adjust constraint thresholds. Constraints use a flat list format and are auto-classified as "required" (blocking) or "advisory" (non-blocking).
 
 ## Does Codex require a git repository?
 

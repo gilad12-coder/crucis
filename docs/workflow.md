@@ -27,10 +27,11 @@ flowchart TD
 The generation agent receives a prompt built from:
 - The objective name, description, and signature
 - Train eval examples (input/output pairs)
-- Primary and secondary constraints from the constraint profile
+- Required and advisory constraints from the constraint profile
 - Constraint guidance text
 - Target file paths (converted to import hints)
 - Context file contents (existing code the agent needs to understand)
+- Behavior descriptions (natural-language behavior expectations, if defined)
 - Active optimizer policy directives (if any)
 - Constraint violation feedback from prior attempts (if retrying)
 - Adversarial feedback from prior cycles (if improving)
@@ -38,7 +39,7 @@ The generation agent receives a prompt built from:
 The agent returns a complete pytest file. Crucis extracts the Python code from the response (handling markdown fences) and validates it:
 
 1. **Syntax check** -- `ast.parse()` on the extracted source
-2. **Constraint check** -- AST-based static analysis against primary and secondary gates
+2. **Constraint check** -- AST-based static analysis against required and advisory gates
 
 If either fails, the violation feedback is appended to the prompt and the generation retries.
 
@@ -54,7 +55,7 @@ In interactive mode, the train suite is displayed with syntax highlighting:
 
 ### Step 3: Adversarial Review
 
-The critic agent receives the approved train suite and attacks it, returning a JSON report:
+The critic agent receives the approved train suite and attacks it. If `behaviors:` are defined in the objective, they are also injected into the adversary prompt so the critic can check whether the tests cover the expected behaviors. The critic returns a JSON report:
 
 ```json
 {
@@ -150,6 +151,8 @@ Tests run in the Docker sandbox by default, or on the host with `--no-sandbox`.
 Host-mode verification executes `python -m pytest` with workspace-aware import path setup.
 
 ### Step 6: Verify Holdout Evals
+
+By default, holdout evals are automatically split from the last ~20% of your `examples:` list — no manual setup needed. You can still provide an explicit `holdout:` field for manual control, or use `holdout: []` to opt out entirely.
 
 Hidden holdout evals are never shown to any agent. Crucis dynamically generates ephemeral pytest files that:
 1. Discover the target module from `target_files` paths

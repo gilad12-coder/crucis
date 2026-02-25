@@ -1,5 +1,5 @@
 {#- Test generation prompt for creating pytest test suites. -#}
-{% from "_macros.jinja2" import examples, primary_constraints, secondary_constraints, guidance, target_files, policy_context %}
+{% from "_macros.jinja2" import examples, behaviors, required_constraints, advisory_constraints, guidance, target_files, policy_context %}
 You are a test-generation engineer writing comprehensive pytest test suites.
 
 Write pytest tests for the callable `{{ objective.name }}`.
@@ -27,11 +27,15 @@ Code context (existing files relevant to this objective):
 {% endif %}
 Examples:
 {{ examples(objective) }}
-Primary constraints:
-{{ primary_constraints(constraints) }}
+{% if objective.behaviors %}
+Expected behaviors:
+{{ behaviors(objective) }}
+{% endif %}
+Required constraints:
+{{ required_constraints(constraints) }}
 
-Secondary constraints:
-{{ secondary_constraints(constraints) }}
+Advisory constraints:
+{{ advisory_constraints(constraints) }}
 
 {% if constraints.guidance %}
 Guidance:

@@ -79,6 +79,8 @@ class TestBuildParser:
         assert args.no_agent is False
         assert args.require_agent is False
         assert args.existing_codebase is False
+        assert args.with_profiles is False
+        assert args.with_settings is False
         assert args.agent is None
 
     def test_init_subcommand_with_flags(self):
@@ -94,6 +96,8 @@ class TestBuildParser:
                 "--no-agent",
                 "--require-agent",
                 "--existing-codebase",
+                "--with-profiles",
+                "--with-settings",
             ]
         )
         assert args.name == "foo"
@@ -101,6 +105,8 @@ class TestBuildParser:
         assert args.no_agent is True
         assert args.require_agent is True
         assert args.existing_codebase is True
+        assert args.with_profiles is True
+        assert args.with_settings is True
 
     def test_run_plan_flag(self):
         """Test run --plan flag."""
@@ -327,7 +333,7 @@ def test_run_evaluate_exits_when_runtime_settings_invalid(
 
 
 @patch("crucis.__main__.display_checkpoint_table")
-@patch("crucis.__main__.load_optimizer_status")
+@patch("crucis.__main__._load_optimizer_status_if_relevant")
 @patch("crucis.__main__.load_checkpoint")
 def test_show_checkpoint_passes_optimizer_status(
     mock_load_checkpoint,
@@ -349,7 +355,7 @@ def test_show_checkpoint_passes_optimizer_status(
     assert "optimizer_status" in mock_display_table.call_args.kwargs
 
 
-@patch("crucis.__main__.load_optimizer_status", return_value=OptimizerStatus(state="idle"))
+@patch("crucis.__main__._load_optimizer_status_if_relevant", return_value=OptimizerStatus(state="idle"))
 @patch("crucis.__main__.load_checkpoint")
 def test_show_checkpoint_json_mode_emits_machine_readable_payload(
     mock_load_checkpoint,
@@ -379,6 +385,7 @@ def test_show_checkpoint_json_mode_emits_machine_readable_payload(
     assert payload["optimizer_status"]["state"] == "idle"
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.save_optimizer_status")
 @patch("crucis.__main__.save_active_policy")
 @patch("crucis.__main__.load_optimizer_status")
@@ -388,6 +395,7 @@ def test_run_promote_promotes_candidate_policy(
     mock_load_status,
     mock_save_active,
     mock_save_status,
+    _mock_gate,
 ):
     """Promote should load candidate and persist active policy + updated status.
 
@@ -412,6 +420,7 @@ def test_run_promote_promotes_candidate_policy(
     assert status_arg.candidate_run_id is None
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.save_active_policy")
 @patch("crucis.__main__.load_candidate_policy")
 @patch("crucis.__main__.load_optimizer_status")
@@ -419,6 +428,7 @@ def test_run_promote_requires_candidate_ready_metadata(
     mock_load_status,
     mock_load_candidate,
     mock_save_active,
+    _mock_gate,
 ):
     """Promotion should fail when run is not candidate-ready.
 
@@ -440,6 +450,7 @@ def test_run_promote_requires_candidate_ready_metadata(
     assert mock_save_active.call_count == 0
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.save_active_policy")
 @patch("crucis.__main__.load_candidate_policy")
 @patch("crucis.__main__.load_optimizer_status")
@@ -447,6 +458,7 @@ def test_run_promote_requires_matching_candidate_run_id(
     mock_load_status,
     mock_load_candidate,
     mock_save_active,
+    _mock_gate,
 ):
     """Promotion should fail when candidate-ready metadata points to another run.
 
@@ -468,6 +480,7 @@ def test_run_promote_requires_matching_candidate_run_id(
     assert mock_save_active.call_count == 0
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.save_optimizer_status")
 @patch("crucis.__main__.save_active_policy")
 @patch("crucis.__main__.load_candidate_policy")
@@ -477,6 +490,7 @@ def test_run_promote_force_overrides_candidate_ready_checks(
     mock_load_candidate,
     mock_save_active,
     mock_save_status,
+    _mock_gate,
 ):
     """Force promotion should bypass candidate-ready guardrails.
 
@@ -494,11 +508,13 @@ def test_run_promote_force_overrides_candidate_ready_checks(
     assert mock_save_status.call_count == 1
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.load_optimizer_status", return_value=None)
 @patch("crucis.__main__.load_candidate_policy", side_effect=FileNotFoundError("missing"))
 def test_run_promote_missing_candidate_exits(
     mock_load_candidate,
     _mock_load_status,
+    _mock_gate,
 ):
     """Missing candidate run should surface error and exit non-zero.
 
@@ -546,8 +562,9 @@ def test_run_doctor_command_json_output(mock_run_doctor, capsys):
     assert isinstance(payload["checks"], list)
 
 
+@patch("crucis.__main__._is_optimizer_enabled_for_command", return_value=True)
 @patch("crucis.__main__.run_optimizer_worker")
-def test_run_optimizer_worker_command_json_output(mock_run_worker, capsys):
+def test_run_optimizer_worker_command_json_output(mock_run_worker, _mock_gate, capsys):
     """optimizer-worker command should expose JSON output with exit code.
 
     Args:
@@ -589,18 +606,22 @@ def test_run_init_command_no_agent_scaffolds_workspace(
         tmp_path: Temporary directory provided by pytest.
         capsys: Pytest capture fixture.
     """
-    created = [tmp_path / "objective.yaml", tmp_path / ".crucis" / "settings.yaml"]
+    created = [tmp_path / "objective.yaml"]
     mock_scaffold.return_value = created
 
     args = type(
         "Args",
         (),
-        {"workspace": str(tmp_path), "no_agent": True, "name": "foo", "existing_codebase": False},
+        {
+            "workspace": str(tmp_path), "no_agent": True, "name": "foo",
+            "existing_codebase": False, "with_profiles": False, "with_settings": False,
+        },
     )()
     run_init_command(args)
 
     mock_scaffold.assert_called_once_with(
         tmp_path.resolve(), name="foo", existing_codebase=False, agent=None, model=None,
+        include_profiles=False, include_settings=False,
     )
     output = capsys.readouterr().err
     assert "objective.yaml" in output
@@ -770,13 +791,17 @@ def test_run_init_command_existing_codebase_auto_mode(
     args = type(
         "Args",
         (),
-        {"workspace": str(tmp_path), "no_agent": True, "name": "p", "existing_codebase": False},
+        {
+            "workspace": str(tmp_path), "no_agent": True, "name": "p",
+            "existing_codebase": False, "with_profiles": False, "with_settings": False,
+        },
     )()
 
     run_init_command(args)
 
     mock_scaffold.assert_called_once_with(
         tmp_path.resolve(), name="p", existing_codebase=True, agent=None, model=None,
+        include_profiles=False, include_settings=False,
     )
     output = capsys.readouterr().err
     assert "Existing codebase detected" in output
@@ -794,13 +819,17 @@ def test_run_init_command_existing_codebase_flag_forces_mode(
     args = type(
         "Args",
         (),
-        {"workspace": str(tmp_path), "no_agent": True, "name": "p", "existing_codebase": True},
+        {
+            "workspace": str(tmp_path), "no_agent": True, "name": "p",
+            "existing_codebase": True, "with_profiles": False, "with_settings": False,
+        },
     )()
 
     run_init_command(args)
 
     mock_scaffold.assert_called_once_with(
         tmp_path.resolve(), name="p", existing_codebase=True, agent=None, model=None,
+        include_profiles=False, include_settings=False,
     )
 
 

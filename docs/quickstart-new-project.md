@@ -1,6 +1,6 @@
 # Quickstart: New Project
 
-Build a verified function from scratch. By the end, you'll have generated tests, adversarial hardening, and a working implementation.
+Build a verified function from scratch using Crucis, an autonomy scaffold for code-generating agents that provides structured automated feedback.
 
 **Who this is for:** You want to create a new function or module and want Crucis to generate robust tests and verified implementation.
 
@@ -20,8 +20,6 @@ crucis init --name add --no-agent
 **Expected output:**
 ```
   Created: /path/to/my-project/objective.yaml
-  Created: /path/to/my-project/constraints/profiles.yaml
-  Created: /path/to/my-project/.crucis/settings.yaml
   Created: /path/to/my-project/src/solution.py
 Tip: run `git init` — codex requires a trusted git repository.
 
@@ -32,6 +30,8 @@ Next steps:
   crucis run --task <name>      # process a single task
   crucis run --dry-run          # preview generation prompts
 ```
+
+`crucis init` creates only the essential files. Use `--with-profiles` to also create `constraints/profiles.yaml`, or `--with-settings` for `.crucis/settings.yaml`. Built-in defaults are used when these files don't exist.
 
 !!! tip "Using Codex?"
     Run `git init && git add -A && git commit -m "init"` before proceeding. Codex requires a trusted git repository.
@@ -44,6 +44,9 @@ Open `objective.yaml` and replace the placeholder with a real function descripti
 name: add
 description: Add two integers and return the sum.
 signature: "add(a: int, b: int) -> int"
+behaviors:
+  - "Returns the arithmetic sum of two integers"
+  - "Handles negative numbers correctly"
 tests_constraint_profile: recommended
 implementation_constraint_profile: recommended
 target_files:
@@ -55,7 +58,6 @@ examples:
     output: "0"
   - input: "(-1, 1)"
     output: "0"
-holdout:
   - input: "(100, 23)"
     output: "123"
 tasks:
@@ -69,15 +71,14 @@ tasks:
         output: "0"
       - input: "(-1, 1)"
         output: "0"
-    holdout:
       - input: "(100, 23)"
         output: "123"
 ```
 
 **Key fields:**
 
-- `examples` — visible examples shown to the generation agent
-- `holdout` — hidden examples never shown to any agent (final safety net)
+- `examples` — visible examples shown to the generation agent. The last ~20% are automatically held out as hidden evals (auto-holdout), so you don't need a separate `holdout:` section.
+- `behaviors` — optional natural-language descriptions of expected behavior, used to guide test generation
 - `target_files` — where the implementation will be written
 
 ## 3. Verify your environment
@@ -140,7 +141,7 @@ Shows a table with task status, optimizer info, and next-step hints.
 ## What just happened?
 
 1. **Test generation** — Crucis generated tests, had a critic attack them, ran a cheating probe, and hardened the tests through an adversarial loop. See [How It Works](workflow.md).
-2. **Implementation** — The implementation agent wrote code guided only by the hardened tests. Hidden holdout evals verified the implementation generalizes.
+2. **Implementation** — The implementation agent wrote code guided only by the hardened tests. Auto-holdout evals (the last ~20% of your examples, automatically reserved) verified the implementation generalizes.
 3. **Checkpoint** — All progress is persisted. You can resume, reset, or inspect at any time.
 
 ## Iterating

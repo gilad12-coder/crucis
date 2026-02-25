@@ -105,6 +105,7 @@ from crucis.execution.sandbox import check_docker_available, run_pytest_in_docke
 from crucis.diagnostics import collect_preflight_checks
 from crucis.intake.objective import parse_objective
 from crucis.models import (
+    AdversarialReport,
     CheckpointState,
     ParsedObjective,
     TaskConstraints,
@@ -239,6 +240,7 @@ def run_fit(
     task_names: list[str] | None = None,
     no_sandbox: bool = False,
     agent_timeout: int | None = None,
+    skip_hardening: bool = False,
 ) -> CheckpointState:
     """Run or resume a Crucis fit session for all unfinished tasks.
 
@@ -286,6 +288,7 @@ def run_fit(
             plan_content=plan_content,
             task_names=task_names,
             agent_timeout=agent_timeout,
+            skip_hardening=skip_hardening,
         )
         _enqueue_optimizer_job(
             workspace,
@@ -494,6 +497,7 @@ def _run_fit_tasks(
     plan_content: str = "",
     task_names: list[str] | None = None,
     agent_timeout: int | None = None,
+    skip_hardening: bool = False,
 ) -> None:
     """Process all unfinished fit tasks and persist progress.
 
@@ -511,6 +515,7 @@ def _run_fit_tasks(
         logger: Run event logger.
         plan_content: Optional structured plan to guide generation.
         task_names: Optional list of task names to process; None means all.
+        skip_hardening: Skip adversarial review and cheating probe.
     """
     display_workspace(workspace)
     t0 = time.monotonic()
@@ -536,6 +541,7 @@ def _run_fit_tasks(
             plan_content=plan_content,
             workspace=workspace,
             agent_timeout=agent_timeout,
+            skip_hardening=skip_hardening,
         )
     display_fit_complete(state, elapsed_sec=time.monotonic() - t0)
 
@@ -555,6 +561,7 @@ def _process_fit_task(
     plan_content: str = "",
     workspace: Path | None = None,
     agent_timeout: int | None = None,
+    skip_hardening: bool = False,
 ) -> None:
     """Run one fit task iteration and persist the checkpoint.
 
@@ -573,6 +580,7 @@ def _process_fit_task(
         plan_content: Optional structured plan to guide generation.
         workspace: Workspace root for reading context files.
         agent_timeout: Override for agent subprocess timeout in seconds.
+        skip_hardening: Skip adversarial review and cheating probe.
     """
     progress = state.task_progress[index]
     logger.emit("task_started", task=progress.name, attempt=index + 1, max_attempts=total)
@@ -593,6 +601,7 @@ def _process_fit_task(
             workspace=workspace,
             custom_checks=custom_checks,
             agent_timeout=agent_timeout,
+            skip_hardening=skip_hardening,
         )
     except Exception as exc:
         logger.emit("task_failed", task=progress.name, success=False, message=str(exc))
@@ -633,6 +642,58 @@ def _resolve_probe_result(
     return probe_succeeded
 
 
+def _process_task_fast(
+    task_name: str,
+    task_objective: ParsedObjective,
+    constraints: TaskConstraints,
+    config: Config,
+    max_attempts: int,
+    auto: bool = False,
+    policy: OptimizerPolicy | None = None,
+    logger: EventLogger | None = None,
+    plan_content: str = "",
+    context_files_content: str = "",
+    custom_checks: dict | None = None,
+    agent_timeout: int | None = None,
+) -> TaskProgress:
+    """Generate tests without adversarial hardening (fast mode).
+
+    Args:
+        task_name: Task name within the objective.
+        task_objective: Scoped objective for the current task.
+        constraints: Resolved constraints for the current task.
+        config: Runtime configuration values.
+        max_attempts: Maximum generation attempts.
+        auto: Whether to auto-approve generated train suites.
+        policy: Active optimizer policy used for prompt steering.
+        logger: Optional event logger for structured telemetry.
+        plan_content: Optional structured plan to guide generation.
+        context_files_content: Concatenated context file content.
+        custom_checks: Optional plugin check config.
+        agent_timeout: Override for agent subprocess timeout in seconds.
+
+    Returns:
+        Task progress with generated tests and empty adversarial report.
+    """
+    display_hardening_cycle(task_name, 1, 1)
+    approved_source = _generate_and_approve(
+        task_objective, constraints, config, max_attempts, "",
+        auto=auto, policy=policy, logger=logger,
+        plan_content=plan_content, context_files_content=context_files_content,
+        custom_checks=custom_checks, agent_timeout=agent_timeout,
+    )
+    report = AdversarialReport(
+        attack_vectors=[], generalization_gaps=[],
+        suggested_probe_tests=[], correctness_issues=[],
+    )
+    return TaskProgress(
+        name=task_name,
+        status=TrainingStatus.complete,
+        train_suite_source=approved_source,
+        adversarial_report=report,
+    )
+
+
 def process_task(
     task_name: str,
     objective: ParsedObjective,
@@ -646,6 +707,7 @@ def process_task(
     workspace: Path | None = None,
     custom_checks: dict | None = None,
     agent_timeout: int | None = None,
+    skip_hardening: bool = False,
 ) -> TaskProgress:
     """Generate and review train suites for one task, then adversarially probe.
 
@@ -662,6 +724,7 @@ def process_task(
         workspace: Workspace root for reading context files.
         custom_checks: Optional plugin check config for primary/secondary gates.
         agent_timeout: Override for agent subprocess timeout in seconds.
+        skip_hardening: Skip adversarial review and cheating probe.
 
     Returns:
         Task progress for the processed task.
@@ -669,6 +732,14 @@ def process_task(
     task_objective = _objective_for_task(objective, task_name)
     context_files_content = _read_task_context_files(objective, workspace)
     max_attempts = max(config.max_iterations, 1)
+
+    if skip_hardening:
+        return _process_task_fast(
+            task_name, task_objective, constraints, config, max_attempts,
+            auto=auto_tests, policy=policy, logger=logger,
+            plan_content=plan_content, context_files_content=context_files_content,
+            custom_checks=custom_checks, agent_timeout=agent_timeout,
+        )
 
     max_adversary_cycles = 2 if auto_adversary else max_attempts
     adversary_feedback = ""
@@ -1951,6 +2022,28 @@ def _append_unique(items: list[str], value: str) -> None:
         items.append(value)
 
 
+def _parse_holdout_case_results(pytest_output: str) -> list[tuple[str, bool]]:
+    """Extract per-case pass/fail from pytest output without leaking values.
+
+    Args:
+        pytest_output: Raw pytest output text.
+
+    Returns:
+        List of (test_name, passed) tuples for holdout cases.
+    """
+    results: list[tuple[str, bool]] = []
+    for line in pytest_output.splitlines():
+        if "::test_holdout_case_" not in line:
+            continue
+        parts = line.split("::")
+        name = parts[-1].split(" ")[0].split("[")[0] if len(parts) > 1 else ""
+        if not name.startswith("test_holdout_case_"):
+            continue
+        passed = "PASSED" in line
+        results.append((name, passed))
+    return results
+
+
 def _redacted_holdout_failure_feedback(
     holdout_output: str,
     holdout_specs: dict[str, ParsedObjective],
@@ -1966,14 +2059,20 @@ def _redacted_holdout_failure_feedback(
     Returns:
         Computed text result for this operation.
     """
+    case_results = _parse_holdout_case_results(holdout_output)
     failed_cases = _count_failed_cases(holdout_output)
     task_count = len(holdout_specs)
-    prefix = f"Verification unit `{unit_name}` failed holdout evaluations. " if unit_name else ""
-    return (
-        f"{prefix}Holdout evaluations failed ({failed_cases} case(s) across "
-        f"{task_count} task(s)). Holdout details are redacted. "
-        "Generalize your implementation and handle broader inputs."
-    )
+    prefix = f"Verification unit `{unit_name}`: " if unit_name else ""
+    lines = [
+        f"{prefix}{failed_cases}/{failed_cases + sum(1 for _, p in case_results if p)} "
+        f"holdout cases failed across {task_count} task(s).",
+    ]
+    if case_results:
+        for name, passed in case_results:
+            status = "PASSED" if passed else "FAILED"
+            lines.append(f"  {name}: {status}")
+    lines.append("Holdout values are hidden. Generalize your implementation.")
+    return "\n".join(lines)
 
 
 def _format_agent_failure_feedback(
@@ -2051,11 +2150,13 @@ def _objective_for_task(objective: ParsedObjective, task_name: str) -> ParsedObj
             train_evals = task.train_evals or objective.train_evals
             holdout_evals = task.holdout_evals or objective.holdout_evals
             target_files = task.target_files or objective.target_files
+            behaviors = task.behaviors or objective.behaviors
             return ParsedObjective(
                 name=task.name,
                 description=task.description or objective.description,
                 train_evals=list(train_evals),
                 holdout_evals=list(holdout_evals),
+                behaviors=list(behaviors),
                 signature=task.signature or objective.signature,
                 tests_constraint_profile=task.tests_constraint_profile or objective.tests_constraint_profile,
                 implementation_constraint_profile=task.implementation_constraint_profile or objective.implementation_constraint_profile,
@@ -2069,6 +2170,7 @@ def _objective_for_task(objective: ParsedObjective, task_name: str) -> ParsedObj
         description=objective.description,
         train_evals=list(objective.train_evals),
         holdout_evals=list(objective.holdout_evals),
+        behaviors=list(objective.behaviors),
         signature=objective.signature,
         tests_constraint_profile=objective.tests_constraint_profile,
         implementation_constraint_profile=objective.implementation_constraint_profile,

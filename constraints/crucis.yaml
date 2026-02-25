@@ -1,12 +1,9 @@
-primary:
-  max_cyclomatic_complexity: 15
-  max_lines_per_function: 80
-  count_docstrings_in_function_lines: false
-  no_magic_numbers: true
-  max_string_literal_repeats: 3
-
-secondary:
-  require_docstrings: true
+max_cyclomatic_complexity: 15
+max_lines_per_function: 80
+count_docstrings_in_function_lines: false
+no_magic_numbers: true
+max_string_literal_repeats: 3
+require_docstrings: true
 
 target_files:
   - "crucis/models.py"
@@ -40,4 +37,5 @@ target_files:
   - "crucis/intake/scaffold.py"
   - "crucis/prompts/__init__.py"
   - "crucis/prompts/_filters.py"
+  - "crucis/constraints/registry.py"
   - "conftest.py"

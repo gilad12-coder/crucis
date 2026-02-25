@@ -20,9 +20,11 @@ crucis init [OPTIONS]
 | `--no-agent` | off | Skip AI interview; use static templates |
 | `--require-agent` | off | Fail if agent onboarding cannot run |
 | `--existing-codebase` | off | Force existing-codebase mode (skip `src/solution.py`) |
+| `--with-profiles` | off | Also create `constraints/profiles.yaml` |
+| `--with-settings` | off | Also create `.crucis/settings.yaml` |
 | `--json` | off | Print machine-readable JSON |
 
-Creates: `objective.yaml`, `constraints/profiles.yaml`, `.crucis/settings.yaml`. Creates `src/solution.py` only for new-project scaffolds.
+By default, creates only `objective.yaml` and `src/solution.py` (for new-project scaffolds). Use `--with-profiles` to also generate `constraints/profiles.yaml` and `--with-settings` to also generate `.crucis/settings.yaml`.
 
 ---
 
@@ -121,7 +123,7 @@ Doctor loads workspace agent settings from `.crucis/settings.yaml` before runnin
 
 ## `crucis promote`
 
-Promote an optimizer candidate policy to active.
+Promote an optimizer candidate policy to active. Requires the optimizer to be enabled (`optimizer: enabled: true` in `.crucis/settings.yaml`).
 
 ```bash
 crucis promote --run-id <run_id> [OPTIONS]
@@ -138,7 +140,7 @@ crucis promote --run-id <run_id> [OPTIONS]
 
 ## `crucis optimizer-worker`
 
-Run background optimizer worker in foreground. This command is hidden from `crucis --help` but remains available for direct use and automation scripts.
+Run background optimizer worker in foreground. This command is hidden from `crucis --help` but remains available for direct use and automation scripts. Requires the optimizer to be enabled (`optimizer: enabled: true` in `.crucis/settings.yaml`).
 
 ```bash
 crucis optimizer-worker [OPTIONS]

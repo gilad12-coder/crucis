@@ -179,7 +179,8 @@ def test_verify_tests_redacts_holdout_literals(mock_run_pytest, tmp_path):
         holdout_specs={"add": holdout_spec},
     )
     assert passed is False
-    assert "holdout evaluations failed" in feedback.lower()
+    assert "holdout cases failed" in feedback.lower()
+    assert "test_holdout_case_0: FAILED" in feedback
     assert "998" not in feedback
     assert "999" not in feedback
 

@@ -2,26 +2,29 @@
 
 ## The problem
 
-Code generation agents can write code that passes the examples you show them. But generated implementations routinely:
+Code generation agents can produce impressive first drafts, but they can't iterate reliably on their own. Without structured feedback, they:
 
 - **Hardcode known inputs** — the function returns `3` when it sees `(1, 2)` rather than actually adding
 - **Miss edge cases** — works for positive integers, crashes on zero or negatives
 - **Satisfy tests without real logic** — a lookup table that maps known inputs to expected outputs
+- **Stall without direction** — when code fails, the agent needs specific, actionable feedback to make progress
 
-Running a few manual tests doesn't catch this. You need adversarial pressure.
+The core issue isn't just false-passing code — it's that agents need structured feedback loops to work autonomously. Every human checkpoint ("did the tests catch cheating?", "does this generalize?", "does this meet style requirements?") is a place where an agent stalls or drifts without intervention.
 
-## The solution: verification-first
+## The solution: an autonomy scaffold
 
-Crucis flips the usual generate-then-test workflow. Tests are generated and hardened *before* any implementation exists. The implementation agent only sees the tests — never the objective — so it must write general code to pass them.
+Crucis is an autonomy scaffold for code-generating agents. It provides structured automated feedback — tests, adversarial review, constraints, holdout verification — so agents can iterate longer without human intervention. Each verification layer maps to a human checkpoint that Crucis automates.
 
-Four verification layers work together:
+Test-driven generation is the forcing function: tests are generated and hardened *before* any implementation exists. The implementation agent only sees the tests — never the objective — so it must write general code to pass them.
 
-| Layer | What it does | When it runs |
+Four automated interventions replace human checkpoints:
+
+| Automated intervention | Replaces this human checkpoint | When it runs |
 |---|---|---|
-| **Constraint gates** | AST-based checks enforce complexity, security, and style rules on generated tests and implementation code | Every generation attempt |
-| **Adversarial review** | A critic agent attacks the test suite, finding gaps and cheating strategies | After test generation |
-| **Cheating probe** | A deliberate cheat implementation tries to pass tests by faking results | After adversarial review |
-| **Holdout evals** | Hidden input/output pairs that no agent ever sees verify the final implementation | After implementation |
+| **Constraint gates** | "Does this code meet our style and complexity standards?" | Every generation attempt |
+| **Adversarial review** | "Are these tests actually robust, or could someone cheat?" | After test generation |
+| **Cheating probe** | "Can a fake implementation pass these tests?" | After adversarial review |
+| **Holdout evals** | "Does this implementation generalize beyond the examples I showed?" | After implementation |
 
 ## Feature-to-outcome map
 
@@ -32,7 +35,9 @@ Four verification layers work together:
 | 34 static constraint checks | Enforced complexity limits, security rules, and code quality standards |
 | Checkpoint/resume | Stop mid-run and pick up where you left off |
 | `--reset` / `--reset-task` | Iterate on specific tasks without restarting everything |
-| Background optimizer | Prompt strategies improve automatically across runs |
+| Auto-holdout | Holdout evals are automatically split from your examples — no manual setup needed |
+| Flat constraints | List constraints naturally; the system classifies them as required or advisory automatically |
+| Background optimizer | (Experimental) Prompt strategies improve automatically across runs |
 | Multi-task objectives | Define several related functions in one file, each verified independently |
 
 ## When NOT to use Crucis

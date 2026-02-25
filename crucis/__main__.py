@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,10 +72,50 @@ _PROFILES_ATTR = "profiles"
 _TASK_FLAG = "--task"
 _DRY_RUN_ATTR = "dry_run"
 _JSON_HELP = "Print machine-readable JSON output"
+_MODEL_METAVAR = "MODEL"
 _SEVERITY_KEY = "severity"
 _SEVERITY_ERROR = "error"
 
+_OPTIMIZER_EXPERIMENTAL_MSG = (
+    "The optimizer is experimental and disabled by default. "
+    "To enable, add 'optimizer:\\n  enabled: true' to .crucis/settings.yaml."
+)
 
+
+def _is_optimizer_enabled_for_command(workspace: Path) -> bool:
+    """Check optimizer enabled status and print guidance when disabled.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        True when optimizer is enabled.
+    """
+    from crucis.persistence.settings import is_optimizer_enabled
+
+    if is_optimizer_enabled(workspace):
+        return True
+    display_info(_OPTIMIZER_EXPERIMENTAL_MSG)
+    return False
+
+
+def _load_optimizer_status_if_relevant(workspace: Path) -> "OptimizerStatus | None":
+    """Load optimizer status only when optimizer is active or has state.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        Optimizer status when relevant, None otherwise.
+    """
+    from crucis.persistence.settings import is_optimizer_enabled
+
+    status = load_optimizer_status(workspace)
+    if status is not None:
+        return status
+    if is_optimizer_enabled(workspace):
+        return OptimizerStatus(state="idle")
+    return None
 
 
 def _get_version() -> str:
@@ -146,8 +187,8 @@ def _add_init_parser(subs) -> None:
         "init",
         help="Scaffold a new Crucis workspace",
         description="Requires Python 3.10+ (3.12+ recommended). Create starter workspace files "
-        "(objective.yaml, constraints/profiles.yaml, .crucis/settings.yaml). "
-        "By default, an AI agent interviews you about your project.",
+        "(objective.yaml + src/solution.py). Use --with-profiles and --with-settings "
+        "for advanced configuration. By default, an AI agent interviews you about your project.",
     )
     p.add_argument("--name", default="my_project", help="Project name for the objective template")
     p.add_argument(
@@ -178,6 +219,16 @@ def _add_init_parser(subs) -> None:
             "Treat workspace as an existing codebase (skip src/solution.py scaffolding). "
             "By default this is auto-detected when Python files already exist."
         ),
+    )
+    p.add_argument(
+        "--with-profiles",
+        action=_STORE_TRUE,
+        help="Also generate constraints/profiles.yaml with default constraint profiles",
+    )
+    p.add_argument(
+        "--with-settings",
+        action=_STORE_TRUE,
+        help="Also generate .crucis/settings.yaml with agent/optimizer configuration",
     )
     p.add_argument(_JSON_OPTION, action=_STORE_TRUE, help=_JSON_HELP)
 
@@ -259,12 +310,50 @@ def _add_run_parser(subs) -> None:
         action=_STORE_TRUE,
         help="Regenerate plan.md even if it already exists (use with --plan)",
     )
+    _add_run_agent_args(p)
+
+
+def _add_run_agent_args(p: argparse.ArgumentParser) -> None:
+    """Add agent, model, and performance flags to the run parser.
+
+    Args:
+        p: The run subcommand parser.
+    """
     p.add_argument(
         "--timeout",
         type=int,
         default=None,
         metavar="SECONDS",
         help="Override agent subprocess timeout (default: 300s)",
+    )
+    p.add_argument(
+        "--model",
+        default=None,
+        metavar=_MODEL_METAVAR,
+        help="Override all agent models (generation, critic, implementation)",
+    )
+    p.add_argument(
+        "--generation-model",
+        default=None,
+        metavar=_MODEL_METAVAR,
+        help="Override the test generation model",
+    )
+    p.add_argument(
+        "--critic-model",
+        default=None,
+        metavar=_MODEL_METAVAR,
+        help="Override the adversarial critic model",
+    )
+    p.add_argument(
+        "--implementation-model",
+        default=None,
+        metavar=_MODEL_METAVAR,
+        help="Override the implementation model",
+    )
+    p.add_argument(
+        "--fast",
+        action=_STORE_TRUE,
+        help="Skip adversarial review and cheating probe (faster iteration)",
     )
 
 
@@ -386,9 +475,9 @@ def _add_promote_parser(subs) -> None:
     """
     p = subs.add_parser(
         "promote",
-        help="Promote an optimizer candidate policy to active",
-        description="Replace the active optimizer policy with a winning candidate "
-        "from a completed optimization run.",
+        help=argparse.SUPPRESS,
+        description="[Experimental] Replace the active optimizer policy with a winning candidate "
+        "from a completed optimization run. Requires optimizer.enabled: true in settings.",
     )
     p.add_argument("--run-id", required=True, help="Run ID of candidate to promote")
     p.add_argument(_WORKSPACE_FLAG, default=".", help=_WORKSPACE_HELP)
@@ -415,7 +504,7 @@ def show_checkpoint(checkpoint_path: Path, as_json: bool = False) -> None:
     if state is None:
         display_error(f"No checkpoint found at {resolved}. {_NO_CHECKPOINT_HINT}")
         raise SystemExit(1)
-    optimizer_status = load_optimizer_status(resolved.parent)
+    optimizer_status = _load_optimizer_status_if_relevant(resolved.parent)
     if as_json:
         print(json.dumps(_checkpoint_payload(state, resolved, optimizer_status), indent=2))
         return
@@ -694,6 +783,30 @@ def _resolve_fit_reset(args: argparse.Namespace, checkpoint_path: Path) -> list[
     return task_names
 
 
+def _apply_model_overrides(args: argparse.Namespace) -> None:
+    """Set model env vars from CLI flags before Config() reads them.
+
+    Per-step flags (``--generation-model`` etc.) override ``--model``.
+
+    Args:
+        args: Parsed CLI arguments with model override fields.
+    """
+    base = getattr(args, "model", None)
+    gen = getattr(args, "generation_model", None)
+    critic = getattr(args, "critic_model", None)
+    impl = getattr(args, "implementation_model", None)
+    if base:
+        os.environ["GENERATION_MODEL"] = base
+        os.environ["CRITIC_MODEL"] = base
+        os.environ["IMPLEMENTATION_MODEL"] = base
+    if gen:
+        os.environ["GENERATION_MODEL"] = gen
+    if critic:
+        os.environ["CRITIC_MODEL"] = critic
+    if impl:
+        os.environ["IMPLEMENTATION_MODEL"] = impl
+
+
 def _handle_run_command(args: argparse.Namespace) -> None:
     """Execute the unified run pipeline.
 
@@ -727,6 +840,7 @@ def _handle_fit_command(args: argparse.Namespace) -> None:
     workspace = Path(ws_arg).resolve() if ws_arg else None
     effective_workspace = workspace or objective_path.parent
     _ensure_runtime_settings(effective_workspace)
+    _apply_model_overrides(args)
 
     if bool(getattr(args, "demo", False)):
         _run_demo_fit(objective_path, Path(args.profiles), effective_workspace)
@@ -761,6 +875,8 @@ def _handle_fit_command(args: argparse.Namespace) -> None:
     agent_timeout = getattr(args, "timeout", None)
     if agent_timeout is not None:
         fit_kwargs["agent_timeout"] = agent_timeout
+    if bool(getattr(args, "fast", False)):
+        fit_kwargs["skip_hardening"] = True
     try:
         run_fit(**fit_kwargs)
     except (ValueError, RuntimeError) as exc:
@@ -1021,6 +1137,8 @@ def run_promote(args: argparse.Namespace) -> None:
         args: Parsed CLI arguments object.
     """
     workspace = Path(args.workspace).resolve()
+    if not _is_optimizer_enabled_for_command(workspace):
+        return
     run_id = str(args.run_id)
     force = bool(getattr(args, "force", False))
 
@@ -1134,9 +1252,12 @@ def run_init_command(args: argparse.Namespace) -> None:
 
     name = str(getattr(args, "name", "my_project"))
     existing_codebase = forced_existing_codebase or detect_existing_codebase(workspace)
+    include_settings = bool(getattr(args, "with_settings", False)) or agent_choice is not None
     created = scaffold_workspace(
         workspace, name=name, existing_codebase=existing_codebase,
         agent=agent_choice, model=model_choice,
+        include_profiles=bool(getattr(args, "with_profiles", False)),
+        include_settings=include_settings,
     )
     as_json = bool(getattr(args, _JSON_ATTR, False))
     _display_init_result(workspace, created, existing_codebase, as_json)
@@ -1253,11 +1374,9 @@ def _workspace_has_files(workspace: Path) -> bool:
         workspace: Workspace root directory.
 
     Returns:
-        True when objective.yaml and settings.yaml both exist.
+        True when objective.yaml exists.
     """
-    from crucis.persistence.settings import settings_path
-
-    return (workspace / "objective.yaml").exists() and settings_path(workspace).exists()
+    return (workspace / "objective.yaml").exists()
 
 
 def _update_settings_model(
@@ -1353,6 +1472,8 @@ def run_optimizer_worker_command(args: argparse.Namespace) -> None:
         args: Parsed CLI arguments object.
     """
     workspace = Path(args.workspace).resolve()
+    if not _is_optimizer_enabled_for_command(workspace):
+        return
     loop_mode = bool(getattr(args, "loop", False))
     exit_code = run_optimizer_worker(workspace, once=not loop_mode)
     if not bool(getattr(args, _JSON_ATTR, False)) and exit_code == 0 and not loop_mode:

@@ -11,8 +11,17 @@
 {% endif %}
 {% endmacro %}
 
-{#- Format primary constraints for the generation prompt. -#}
-{% macro primary_constraints(constraints) %}
+{#- Format natural-language behavior descriptions. -#}
+{% macro behaviors(objective) %}
+{% if objective.behaviors %}
+{% for behavior in objective.behaviors %}
+  - {{ behavior }}
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{#- Format required (primary) constraints for the generation prompt. -#}
+{% macro required_constraints(constraints) %}
 {% set parts = [] %}
 {% if constraints.primary.max_cyclomatic_complexity is not none %}
 {% set _ = parts.append("max cyclomatic complexity: " ~ constraints.primary.max_cyclomatic_complexity) %}
@@ -38,8 +47,8 @@
 {% endif %}
 {% endmacro %}
 
-{#- Format secondary constraints. -#}
-{% macro secondary_constraints(constraints) %}
+{#- Format advisory (secondary) constraints. -#}
+{% macro advisory_constraints(constraints) %}
 {% set parts = [] %}
 {% if constraints.secondary.require_docstrings %}
 {% set _ = parts.append("every function/class must include a docstring") %}
@@ -101,14 +110,14 @@ Stage directives ({{ stage }}):
 {% endif %}
 {% endmacro %}
 
-{#- Format full constraints section (primary + secondary + guidance). -#}
+{#- Format full constraints section (required + advisory + guidance). -#}
 {% macro constraints_section(constraints) %}
 {% if constraints is not none %}
-Primary constraints:
-{{ primary_constraints(constraints) }}
+Required constraints:
+{{ required_constraints(constraints) }}
 
-Secondary constraints:
-{{ secondary_constraints(constraints) }}
+Advisory constraints:
+{{ advisory_constraints(constraints) }}
 
 {% if constraints.guidance %}
 Guidance to enforce:
@@ -120,7 +129,7 @@ Guidance to enforce:
 
 {#- Format dynamic constraint dump from model_dump dicts (plan/curriculum). -#}
 {% macro constraints_dump(primary_fields, secondary_fields, guidance_list) %}
-{% for label, fields in [("primary", primary_fields), ("secondary", secondary_fields)] %}
+{% for label, fields in [("required", primary_fields), ("advisory", secondary_fields)] %}
 {% if fields %}
 - {{ label }} constraints:
 {% for name, value in fields.items() %}

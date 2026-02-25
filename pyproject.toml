@@ -1,9 +1,26 @@
 [project]
 name = "crucis"
 version = "0.1.0"
-description = "Crucis objective-driven code training and evaluation"
+description = "Structured automated feedback for code-generating agents — so they can work longer and more reliably without human intervention."
 license = "MIT"
+readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Gilad Morad" },
+]
+keywords = ["ai", "agents", "code-generation", "testing", "verification", "adversarial"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "gepa>=0.1.0",
     "jinja2>=3.0",
@@ -20,6 +37,12 @@ dependencies = [
 [project.scripts]
 crucis = "crucis.__main__:main"
 crucis-mcp = "crucis.mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/gilad12-coder/crucis"
+Documentation = "https://gilad12-coder.github.io/crucis/"
+Repository = "https://github.com/gilad12-coder/crucis"
+Issues = "https://github.com/gilad12-coder/crucis/issues"
 
 [dependency-groups]
 dev = [

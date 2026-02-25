@@ -1,41 +1,33 @@
 profiles:
   default:
-    primary:
-      max_cyclomatic_complexity: 10
-    secondary:
-      require_docstrings: true
+    max_cyclomatic_complexity: 10
+    require_docstrings: true
 
   strict:
-    primary:
-      max_cyclomatic_complexity: 5
-      max_lines_per_function: 30
-    secondary:
-      require_docstrings: true
+    max_cyclomatic_complexity: 5
+    max_lines_per_function: 30
+    require_docstrings: true
 
   recommended:
-    primary:
-      max_cyclomatic_complexity: 10
-      max_cognitive_complexity: 15
-      max_lines_per_function: 50
-      max_parameters: 5
-      max_nested_depth: 4
-      no_bare_except: true
-      no_unreachable_code: true
-      no_mutable_defaults: true
-      no_eval: true
-      no_exec: true
-      no_magic_numbers: true
-    secondary:
-      require_docstrings: true
-      no_print_statements: true
-      no_debugger_statements: true
+    max_cyclomatic_complexity: 10
+    max_cognitive_complexity: 15
+    max_lines_per_function: 50
+    max_parameters: 5
+    max_nested_depth: 4
+    no_bare_except: true
+    no_unreachable_code: true
+    no_mutable_defaults: true
+    no_eval: true
+    no_exec: true
+    require_docstrings: true
+    no_print_statements: true
+    no_debugger_statements: true
+    no_magic_numbers: true
 
   config_hygiene:
-    primary:
-      no_magic_numbers: true
-      no_hardcoded_secrets: true
-      max_string_literal_repeats: 3
-    secondary:
-      no_global_state: true
+    no_magic_numbers: true
+    no_hardcoded_secrets: true
+    max_string_literal_repeats: 3
+    no_global_state: true
 
 functions: {}

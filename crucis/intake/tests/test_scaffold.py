@@ -73,7 +73,9 @@ def test_scaffold_workspace_existing_codebase_skips_solution_placeholder(tmp_pat
     assert tmp_path / "objective.yaml" in created
     objective = yaml.safe_load((tmp_path / "objective.yaml").read_text(encoding="utf-8"))
     assert objective["target_files"] == []
-    assert objective["tasks"][0]["target_files"] == []
+    assert "tasks" not in objective
+    assert objective["context_files"] == []
+    assert objective["existing_tests"] == []
 
 
 def test_scaffold_workspace_new_project_creates_solution_placeholder(tmp_path):
@@ -140,7 +142,7 @@ def test_scaffold_workspace_with_model_writes_settings(tmp_path):
     """scaffold_workspace with agent/model should write configured settings."""
     scaffold_workspace(
         tmp_path, name="demo", existing_codebase=False,
-        agent="codex", model="o4-mini",
+        agent="codex", model="o4-mini", include_settings=True,
     )
     settings = yaml.safe_load(
         (tmp_path / ".crucis" / "settings.yaml").read_text(encoding="utf-8")

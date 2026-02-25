@@ -16,7 +16,7 @@ from crucis.persistence.constants import CRUCIS_DIR_NAME
 class OptimizerRuntimeSettings(BaseModel):
     """Settings that control GEPA background optimization behavior."""
 
-    enabled: bool = True
+    enabled: bool = False
     max_metric_calls: int = Field(default=24, ge=1)
     reflection_lm: str = "openai/gpt-5.2"
     reflection_api_key: str | None = None
@@ -166,6 +166,21 @@ def try_load_runtime_settings(workspace: Path) -> RuntimeSettings | None:
         return RuntimeSettings.model_validate(raw)
     except Exception:
         return None
+
+
+def is_optimizer_enabled(workspace: Path) -> bool:
+    """Check whether the optimizer is enabled for a workspace.
+
+    Args:
+        workspace: Workspace root directory.
+
+    Returns:
+        True when optimizer.enabled is set in the workspace settings.
+    """
+    settings = try_load_runtime_settings(workspace)
+    if settings is None:
+        return False
+    return settings.optimizer.enabled
 
 
 REFLECTION_LM_PREFIX_TO_ENV: dict[str, str] = {
