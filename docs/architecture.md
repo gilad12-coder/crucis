@@ -94,7 +94,11 @@ project/
 | `display.py` | Rich terminal output (tables, panels, syntax highlighting) |
 | `diagnostics.py` | Environment and workspace diagnostics (`crucis doctor`) |
 | `cli/runner.py` | Subprocess wrapper for Claude/Codex agents |
-| `core/loop.py` | Fit and evaluation orchestration, test verification |
+| `core/loop.py` | Top-level fit and evaluation orchestration |
+| `core/generation.py` | Test generation phase (generate → validate → review cycle) |
+| `core/evaluation.py` | Evaluation phase (implement → verify retry cycle) |
+| `core/verification.py` | Shared verification utilities (test running, constraint checking, holdout evals) |
+| `core/_shared.py` | Shared helpers: preflight checks, test path collection, optimizer enqueueing, run logging |
 | `core/planner.py` | Structured plan generation (`crucis run --plan`) |
 | `prompts/__init__.py` | Jinja2 template engine for all prompt rendering |
 | `prompts/_filters.py` | Custom Jinja2 filters (path_to_module, bool_label, readable_name) |
@@ -107,12 +111,17 @@ project/
 | `intake/scaffold.py` | Workspace scaffolding and agent-driven onboarding (`crucis init`) |
 | `constraints/loader.py` | Profile loading, constraint resolution, and auto-classification via the constraint registry |
 | `constraints/checker.py` | AST-based static analysis (44 checks — each classified as required or advisory) |
+| `constraints/_class_metrics.py` | Class-level metric checkers (methods, fields, lines, WMC per class) |
+| `constraints/_module_metrics.py` | Module-level metric checkers (efferent coupling, maintainability index) |
+| `constraints/_python_idioms.py` | Python idiom checkers (naming conventions, single-char names, unnecessary else, len-as-condition) |
 | `execution/sandbox.py` | Docker-isolated pytest execution |
 | `execution/optimizer.py` | Background policy optimization job management |
 | `persistence/checkpoint.py` | Checkpoint creation, save, and load |
 | `persistence/policy.py` | Policy I/O, candidate management, status tracking |
 | `persistence/settings.py` | Settings schema and persistence |
 | `persistence/events.py` | Structured JSONL event logging |
+| `defaults.py` | Shared utilities: sanitized environment, text excerpting |
+| `_compat.py` | Python 3.10 compatibility shim (StrEnum backport) |
 | `gepa_optimizer.py` | GEPA-powered policy optimization worker |
 
 ## Agent Integration
