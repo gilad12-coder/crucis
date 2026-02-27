@@ -257,9 +257,7 @@ def test_resolve_constraints_unknown_profile_lists_available(tmp_path):
     assert "strict" in msg
 
 
-# ---------------------------------------------------------------------------
 # extract_custom_checks
-# ---------------------------------------------------------------------------
 
 PROFILES_WITH_CUSTOM = {
     "profiles": {
@@ -328,9 +326,7 @@ def test_extract_custom_checks_returns_none_when_absent(tmp_path):
     assert result is None
 
 
-# ---------------------------------------------------------------------------
 # Flat constraint format normalization
-# ---------------------------------------------------------------------------
 
 FLAT_PROFILES = {
     "profiles": {

@@ -581,14 +581,10 @@ def test_run_optimizer_worker_command_json_output(mock_run_worker, _mock_gate, c
     assert payload["mode"] == "once"
 
 
-# ---------------------------------------------------------------------------
 # objective mutation command tests
-# ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
 # init command handler tests
-# ---------------------------------------------------------------------------
 
 
 @patch("crucis.__main__.detect_existing_codebase", return_value=False)
@@ -861,9 +857,7 @@ def test_run_init_command_warns_on_unsupported_python(
     assert "supported but Python 3.12+ is recommended" in output
 
 
-# ---------------------------------------------------------------------------
 # run --plan handler tests
-# ---------------------------------------------------------------------------
 
 
 def test_run_plan_missing_objective_exits(tmp_path):

@@ -53,6 +53,7 @@ __all__ = [
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -67,6 +68,8 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel
+
+_log = logging.getLogger(__name__)
 
 try:
     from gepa.optimize_anything import (
@@ -269,7 +272,7 @@ def run_optimizer_worker(workspace: Path, once: bool = True) -> int:
     run_succeeded = True
     stop_message: str | None = None
     if logger.path is not None:
-        print(f"Run log: {logger.path}")
+        _log.info("Run log: %s", logger.path)
     logger.emit(
         "worker_started",
         details={"workspace": str(workspace), "mode": "once" if once else "loop"},

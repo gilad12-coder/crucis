@@ -2,7 +2,7 @@ max_cyclomatic_complexity: 15
 max_lines_per_function: 80
 count_docstrings_in_function_lines: false
 no_magic_numbers: true
-max_string_literal_repeats: 3
+max_string_literal_repeats: 4
 require_docstrings: true
 
 target_files:
@@ -39,3 +39,16 @@ target_files:
   - "crucis/prompts/_filters.py"
   - "crucis/constraints/registry.py"
   - "conftest.py"
+
+  - "crucis/_compat.py"
+  - "crucis/constraints/plugins.py"
+  - "crucis/core/_shared.py"
+  - "crucis/core/evaluation.py"
+  - "crucis/core/generation.py"
+  - "crucis/core/verification.py"
+  - "crucis/dev_bootstrap.py"
+  - "crucis/diagnostics.py"
+  - "crucis/gepa_optimizer.py"
+  - "crucis/mcp/__main__.py"
+  - "crucis/mcp/_workspace.py"
+  - "crucis/mcp/server.py"

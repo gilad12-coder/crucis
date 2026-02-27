@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.benchmarks
+.ruff_cache
+.idea
+.cache
+site
+dist
+*.egg-info
+.checkpoint.json
+.crucis

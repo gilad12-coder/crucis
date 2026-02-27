@@ -29,6 +29,20 @@ from crucis.persistence.settings import (
 
 _MASK_THRESHOLD = 8
 _MASK_VISIBLE = 4
+_STATUS_OK = "ok"
+_STATUS_FAIL = "fail"
+_STATUS_WARN = "warn"
+_SUBPROCESS_TIMEOUT_SEC = 5
+
+_CHECK_PYTHON_VERSION = "python_version"
+_CHECK_PYTEST = "pytest"
+_CHECK_RUNTIME_SETTINGS = "runtime_settings"
+_CHECK_DOCKER = "docker"
+_CHECK_OBJECTIVE = "objective"
+_CHECK_PROFILES = "profiles"
+_CHECK_CHECKPOINT = "checkpoint"
+_AGENT_CLAUDE = "claude"
+_AGENT_CODEX = "codex"
 
 
 def mask_api_key(key: str) -> str:
@@ -185,7 +199,7 @@ def run_doctor(
         checks.append(_check_checkpoint(resolved_workspace, checkpoint_path))
 
     return DoctorReport(
-        ok=not any(check.status == "fail" for check in checks),
+        ok=not any(check.status == _STATUS_FAIL for check in checks),
         workspace=resolved_workspace,
         checks=checks,
     )
@@ -220,13 +234,13 @@ def _check_git_repository(workspace: Path) -> DiagnosticCheck:
         if (path / ".git").exists():
             return DiagnosticCheck(
                 id="git_repository",
-                status="ok",
+                status=_STATUS_OK,
                 message=f"Git repository found at {path}",
             )
         path = path.parent
     return DiagnosticCheck(
         id="git_repository",
-        status="warn",
+        status=_STATUS_WARN,
         message="Workspace is not inside a git repository",
         hint=(
             "Run `git init` or clone a repository. "
@@ -250,19 +264,19 @@ def _check_python_version() -> DiagnosticCheck:
     label = f"Python {version.major}.{version.minor}.{version.micro}"
     if current >= _RECOMMENDED_PYTHON:
         return DiagnosticCheck(
-            id="python_version",
-            status="ok",
+            id=_CHECK_PYTHON_VERSION,
+            status=_STATUS_OK,
             message=label,
         )
     if current >= _MINIMUM_PYTHON:
         return DiagnosticCheck(
-            id="python_version",
-            status="ok",
+            id=_CHECK_PYTHON_VERSION,
+            status=_STATUS_OK,
             message=f"{label} (3.12+ recommended)",
         )
     return DiagnosticCheck(
-        id="python_version",
-        status="fail",
+        id=_CHECK_PYTHON_VERSION,
+        status=_STATUS_FAIL,
         message=f"{label} is unsupported (requires >=3.10)",
         hint="Use Python 3.10+ and recreate the environment.",
     )
@@ -276,13 +290,13 @@ def _check_pytest_available() -> DiagnosticCheck:
     """
     if importlib.util.find_spec("pytest") is not None:
         return DiagnosticCheck(
-            id="pytest",
-            status="ok",
+            id=_CHECK_PYTEST,
+            status=_STATUS_OK,
             message="pytest module is importable",
         )
     return DiagnosticCheck(
-        id="pytest",
-        status="fail",
+        id=_CHECK_PYTEST,
+        status=_STATUS_FAIL,
         message="pytest module is not installed in this environment",
         hint="Install pytest in the active environment (for example: `pip install pytest`).",
     )
@@ -301,27 +315,31 @@ def _check_agent_binary(agent_binary: str) -> DiagnosticCheck:
     if resolved:
         return DiagnosticCheck(
             id=f"agent_{agent_binary}",
-            status="ok",
+            status=_STATUS_OK,
             message=f"Agent binary `{agent_binary}` found at {resolved}",
         )
     return DiagnosticCheck(
         id=f"agent_{agent_binary}",
-        status="fail",
+        status=_STATUS_FAIL,
         message=f"Agent binary `{agent_binary}` not found on PATH",
         hint=f"Install `{agent_binary}` and ensure it is available on PATH.",
     )
 
 
 _AGENT_API_KEYS: dict[str, str] = {
-    "claude": "ANTHROPIC_API_KEY",
-    "codex": "OPENAI_API_KEY",
+    _AGENT_CLAUDE: "ANTHROPIC_API_KEY",
+    _AGENT_CODEX: "OPENAI_API_KEY",
 }
 """Environment variable required by each known agent."""
 
 
 def _has_claude_login_session() -> bool:
-    """Check whether Claude CLI has an active authenticated session."""
-    claude_binary = shutil.which("claude")
+    """Check whether Claude CLI has an active authenticated session.
+
+    Returns:
+        True if Claude CLI reports loggedIn status.
+    """
+    claude_binary = shutil.which(_AGENT_CLAUDE)
     if claude_binary is None:
         return False
     try:
@@ -330,7 +348,7 @@ def _has_claude_login_session() -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=5,
+            timeout=_SUBPROCESS_TIMEOUT_SEC,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -341,8 +359,12 @@ def _has_claude_login_session() -> bool:
 
 
 def _has_codex_login_session() -> bool:
-    """Check whether Codex CLI has an active authenticated session."""
-    codex_binary = shutil.which("codex")
+    """Check whether Codex CLI has an active authenticated session.
+
+    Returns:
+        True if Codex CLI reports an active login.
+    """
+    codex_binary = shutil.which(_AGENT_CODEX)
     if codex_binary is None:
         return False
     try:
@@ -351,7 +373,7 @@ def _has_codex_login_session() -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=5,
+            timeout=_SUBPROCESS_TIMEOUT_SEC,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -390,25 +412,25 @@ def _check_required_api_keys(
             checks.append(
                 DiagnosticCheck(
                     id=f"api_key_{agent}",
-                    status="ok",
+                    status=_STATUS_OK,
                     message=f"{env_key} is set",
                 )
             )
             continue
-        if agent == "claude" and _has_claude_login_session():
+        if agent == _AGENT_CLAUDE and _has_claude_login_session():
             checks.append(
                 DiagnosticCheck(
                     id="api_key_claude",
-                    status="ok",
+                    status=_STATUS_OK,
                     message="Claude CLI login session is active (ANTHROPIC_API_KEY not required)",
                 )
             )
             continue
-        if agent == "codex" and _has_codex_login_session():
+        if agent == _AGENT_CODEX and _has_codex_login_session():
             checks.append(
                 DiagnosticCheck(
                     id="api_key_codex",
-                    status="ok",
+                    status=_STATUS_OK,
                     message="Codex CLI login session is active (OPENAI_API_KEY not required)",
                 )
             )
@@ -421,7 +443,7 @@ def _check_required_api_keys(
         checks.append(
             DiagnosticCheck(
                 id=f"api_key_{agent}",
-                status="warn",
+                status=_STATUS_WARN,
                 message=f"{env_key} is not set (required by {agent} agent)",
                 hint=hint,
             )
@@ -430,8 +452,8 @@ def _check_required_api_keys(
 
 
 _AGENT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
-    "claude": ("claude-", "sonnet", "haiku", "opus"),
-    "codex": ("gpt-", "o1", "o3", "o4", "codex"),
+    _AGENT_CLAUDE: ("claude-", "sonnet", "haiku", "opus"),
+    _AGENT_CODEX: ("gpt-", "o1", "o3", "o4", _AGENT_CODEX),
 }
 """Known model-name prefixes associated with each agent."""
 
@@ -462,7 +484,7 @@ def _check_agent_model_coherence(config: Config) -> list[DiagnosticCheck]:
         checks.append(
             DiagnosticCheck(
                 id=f"agent_model_{role}",
-                status="warn",
+                status=_STATUS_WARN,
                 message=(
                     f"{role}_agent={agent!r} with {role}_model={model!r} "
                     "looks like a cross-agent mismatch"
@@ -487,11 +509,11 @@ def _check_claudecode_nesting(required_agents: Iterable[str]) -> DiagnosticCheck
     """
     if not os.environ.get("CLAUDECODE"):
         return None
-    if "claude" not in set(required_agents):
+    if _AGENT_CLAUDE not in set(required_agents):
         return None
     return DiagnosticCheck(
         id="claudecode_nesting",
-        status="warn",
+        status=_STATUS_WARN,
         message="Running inside Claude Code with 'claude' as an agent may fail",
         hint=(
             "Set GENERATION_AGENT=codex in .crucis/settings.yaml "
@@ -512,8 +534,8 @@ def _check_runtime_settings(workspace: Path) -> DiagnosticCheck:
     path = settings_path(workspace)
     if not path.exists():
         return DiagnosticCheck(
-            id="runtime_settings",
-            status="warn",
+            id=_CHECK_RUNTIME_SETTINGS,
+            status=_STATUS_WARN,
             message=f"No runtime settings file at {path}",
             hint="It will be created automatically on first run.",
         )
@@ -522,8 +544,8 @@ def _check_runtime_settings(workspace: Path) -> DiagnosticCheck:
         raw = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING))
     except Exception as exc:
         return DiagnosticCheck(
-            id="runtime_settings",
-            status="fail",
+            id=_CHECK_RUNTIME_SETTINGS,
+            status=_STATUS_FAIL,
             message=f"Could not read runtime settings: {exc}",
             hint="Fix or remove `.crucis/settings.yaml` and retry.",
         )
@@ -532,15 +554,15 @@ def _check_runtime_settings(workspace: Path) -> DiagnosticCheck:
         RuntimeSettings.model_validate(raw or {})
     except Exception as exc:
         return DiagnosticCheck(
-            id="runtime_settings",
-            status="fail",
+            id=_CHECK_RUNTIME_SETTINGS,
+            status=_STATUS_FAIL,
             message=f"Runtime settings are invalid: {exc}",
             hint="Fix `.crucis/settings.yaml` schema values.",
         )
 
     return DiagnosticCheck(
-        id="runtime_settings",
-        status="ok",
+        id=_CHECK_RUNTIME_SETTINGS,
+        status=_STATUS_OK,
         message=f"Runtime settings valid at {path}",
     )
 
@@ -564,7 +586,7 @@ def _check_optimizer_api_key(workspace: Path) -> DiagnosticCheck | None:
         if lm.startswith(prefix) and not os.environ.get(env_key):
             return DiagnosticCheck(
                 id="optimizer_api_key",
-                status="warn",
+                status=_STATUS_WARN,
                 message=f"{env_key} is not set (required by optimizer reflection_lm `{lm}`)",
                 hint=(
                     f"Set reflection_api_key in .crucis/settings.yaml, "
@@ -586,20 +608,20 @@ def _check_docker(require_docker: bool) -> DiagnosticCheck:
     available = check_docker_available()
     if available:
         return DiagnosticCheck(
-            id="docker",
-            status="ok",
+            id=_CHECK_DOCKER,
+            status=_STATUS_OK,
             message="Docker sandbox is available",
         )
     if require_docker:
         return DiagnosticCheck(
-            id="docker",
-            status="fail",
+            id=_CHECK_DOCKER,
+            status=_STATUS_FAIL,
             message="Docker sandbox is unavailable",
             hint="Start Docker to enable isolated sandbox execution.",
         )
     return DiagnosticCheck(
-        id="docker",
-        status="ok",
+        id=_CHECK_DOCKER,
+        status=_STATUS_OK,
         message="Docker sandbox is unavailable (optional)",
     )
 
@@ -617,8 +639,8 @@ def _check_objective(workspace: Path, objective_path: Path) -> DiagnosticCheck:
     resolved = _resolve_input_path(workspace, objective_path).resolve()
     if not resolved.exists():
         return DiagnosticCheck(
-            id="objective",
-            status="fail",
+            id=_CHECK_OBJECTIVE,
+            status=_STATUS_FAIL,
             message=f"Objective file not found at {resolved}",
             hint="Pass a valid objective path.",
         )
@@ -626,14 +648,14 @@ def _check_objective(workspace: Path, objective_path: Path) -> DiagnosticCheck:
         parse_objective(resolved)
     except Exception as exc:
         return DiagnosticCheck(
-            id="objective",
-            status="fail",
+            id=_CHECK_OBJECTIVE,
+            status=_STATUS_FAIL,
             message=f"Objective parse failed: {exc}",
             hint="Fix objective schema/values.",
         )
     return DiagnosticCheck(
-        id="objective",
-        status="ok",
+        id=_CHECK_OBJECTIVE,
+        status=_STATUS_OK,
         message=f"Objective parsed successfully from {resolved}",
     )
 
@@ -651,8 +673,8 @@ def _check_profiles(workspace: Path, profiles_path: Path) -> DiagnosticCheck:
     resolved = _resolve_input_path(workspace, profiles_path).resolve()
     if not resolved.exists():
         return DiagnosticCheck(
-            id="profiles",
-            status="fail",
+            id=_CHECK_PROFILES,
+            status=_STATUS_FAIL,
             message=f"Profiles file not found at {resolved}",
             hint="Pass a valid profiles path.",
         )
@@ -660,14 +682,14 @@ def _check_profiles(workspace: Path, profiles_path: Path) -> DiagnosticCheck:
         load_profiles(resolved)
     except Exception as exc:
         return DiagnosticCheck(
-            id="profiles",
-            status="fail",
+            id=_CHECK_PROFILES,
+            status=_STATUS_FAIL,
             message=f"Profiles parse failed: {exc}",
             hint="Fix constraints profiles YAML schema.",
         )
     return DiagnosticCheck(
-        id="profiles",
-        status="ok",
+        id=_CHECK_PROFILES,
+        status=_STATUS_OK,
         message=f"Profiles parsed successfully from {resolved}",
     )
 
@@ -685,8 +707,8 @@ def _check_checkpoint(workspace: Path, checkpoint_path: Path) -> DiagnosticCheck
     resolved = _resolve_input_path(workspace, checkpoint_path).resolve()
     if not resolved.exists():
         return DiagnosticCheck(
-            id="checkpoint",
-            status="fail",
+            id=_CHECK_CHECKPOINT,
+            status=_STATUS_FAIL,
             message=f"Checkpoint file not found at {resolved}",
             hint="Run `crucis run` first or pass an existing checkpoint path.",
         )
@@ -694,20 +716,20 @@ def _check_checkpoint(workspace: Path, checkpoint_path: Path) -> DiagnosticCheck
         state = load_checkpoint(resolved)
     except Exception as exc:
         return DiagnosticCheck(
-            id="checkpoint",
-            status="fail",
+            id=_CHECK_CHECKPOINT,
+            status=_STATUS_FAIL,
             message=f"Checkpoint parse failed: {exc}",
             hint="Fix or regenerate the checkpoint file.",
         )
     if state is None:
         return DiagnosticCheck(
-            id="checkpoint",
-            status="fail",
+            id=_CHECK_CHECKPOINT,
+            status=_STATUS_FAIL,
             message=f"Checkpoint file not found at {resolved}",
             hint="Run `crucis run` first or pass an existing checkpoint path.",
         )
     return DiagnosticCheck(
-        id="checkpoint",
-        status="ok",
+        id=_CHECK_CHECKPOINT,
+        status=_STATUS_OK,
         message=f"Checkpoint loaded successfully from {resolved}",
     )

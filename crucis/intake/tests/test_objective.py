@@ -433,9 +433,7 @@ def test_parse_objective_pydantic_error_is_human_readable(tmp_path):
     assert "Invalid objective" in str(exc.value)
 
 
-# ---------------------------------------------------------------------------
 # Auto-holdout tests
-# ---------------------------------------------------------------------------
 
 
 def _example(n: int) -> dict:

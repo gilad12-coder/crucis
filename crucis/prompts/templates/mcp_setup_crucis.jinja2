@@ -1,0 +1,15 @@
+Set up a Crucis verification pipeline for `{{ function_name }}`: {{ function_description }}
+
+Steps:
+1. Use crucis_init to scaffold the workspace if no objective.yaml exists
+2. Edit objective.yaml:
+   - Set name to '{{ function_name }}'
+   - Set description to explain the behavior
+   - Set signature to the function signature
+   - Add examples (input/output pairs — holdout evals are auto-split)
+   - Optionally add behaviors (natural-language descriptions)
+   - Set target_files to where the implementation should go
+3. Use crucis_validate to check the objective is valid
+4. Use crucis_doctor to verify the environment is ready
+5. Use the agent_tdd_workflow prompt to run the step-by-step workflow
+6. Use crucis_summary to check results

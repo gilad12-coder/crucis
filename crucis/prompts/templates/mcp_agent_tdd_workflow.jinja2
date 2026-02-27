@@ -1,0 +1,38 @@
+Run Crucis TDD in step-by-step mode using `{{ objective_path }}`.
+You act as generator, critic, and implementer — but spin up sub-agents
+for tasks that require information isolation (fresh coding context).
+
+For each task in the objective:
+
+**Phase 1: Generate Tests**
+1. crucis_get_prompt(step='generation', task_name=...) — get the generation prompt
+2. Read the prompt and write a complete pytest test suite
+3. crucis_submit_test_suite(task_name=..., test_source=...) — validate and save
+   - If constraints fail, fix violations and resubmit
+
+**Phase 2: Adversarial Review**
+4. crucis_get_prompt(step='adversary', task_name=...) — get the adversary prompt
+5. **Spawn a sub-agent** for adversarial review. The sub-agent should ONLY see
+   the test suite (not the objective or generation context). It identifies:
+   - Attack vectors: ways a cheating implementation could pass
+   - Generalization gaps: missing edge cases or input categories
+   - Suggested probe tests: specific tests to expose weaknesses
+6. crucis_submit_adversarial_report(task_name=..., ...) — save findings
+
+**Phase 3: Cheating Probe**
+7. **Spawn a sub-agent** for the cheating probe. The sub-agent should ONLY see
+   the test file and must try to write a deliberately cheating implementation
+   (hardcoding, lookup tables, input fingerprinting). It must NOT see the
+   objective, description, or real implementation intent.
+   - If probe passes tests: tests are weak. Feed findings back and regenerate from step 1
+   - If probe fails tests: tests are robust. Continue.
+
+**Phase 4: Implement**
+8. crucis_write_tests() — materialize test files to disk
+9. crucis_get_prompt(step='evaluation') — get the curriculum
+10. **Spawn a sub-agent** for implementation. The sub-agent should ONLY see
+    the tests and curriculum (not the adversarial context or generation prompt).
+    It writes code to pass all tests.
+11. crucis_verify_implementation() — run tests + holdout evals
+    - If failed: fix implementation, re-verify
+    - If passed: done!

@@ -21,9 +21,7 @@ def _clean_registry():
     clear_custom_checks()
 
 
-# ---------------------------------------------------------------------------
 # Registry management
-# ---------------------------------------------------------------------------
 
 
 class TestPluginRegistry:
@@ -81,9 +79,7 @@ class TestPluginRegistry:
         assert len(get_registered_checks()) == 0
 
 
-# ---------------------------------------------------------------------------
 # run_custom_checks execution
-# ---------------------------------------------------------------------------
 
 
 class TestRunCustomChecks:
@@ -123,9 +119,7 @@ class TestRunCustomChecks:
         assert received["config"] == 42
 
 
-# ---------------------------------------------------------------------------
 # Integration with check_constraints two-gate flow
-# ---------------------------------------------------------------------------
 
 
 class TestCheckConstraintsWithPlugins:

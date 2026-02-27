@@ -70,10 +70,25 @@ button {
 .md-header {
   background: var(--crucis-surface);
   color: var(--crucis-text);
-  border-bottom: 1px solid var(--crucis-border);
+  border-bottom: none;
   box-shadow: none;
   padding-top: 0.3rem;
   padding-bottom: 0.3rem;
+}
+
+.md-header::after {
+  content: "\201CThe more constraints one imposes, the more one frees one\2019s self.\201D\2002\2014\2009Igor Stravinsky";
+  display: block;
+  width: 100%;
+  font-family: "Space Grotesk", Georgia, serif;
+  font-size: 0.7rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--crucis-text-soft);
+  background: var(--crucis-bg);
+  border-bottom: 1px solid var(--crucis-border);
+  padding: 0.25rem 0.75rem;
+  letter-spacing: 0.01em;
 }
 
 .md-header__inner {
@@ -205,6 +220,8 @@ button {
 .md-content__inner > h1:first-of-type {
   margin-top: 0.2rem;
 }
+
+/* Quote in header — always visible next to logo + title */
 
 .hero-logo {
   max-width: 460px;

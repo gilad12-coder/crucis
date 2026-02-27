@@ -12,6 +12,9 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from crucis.mcp._workspace import (
     InputTooLargeError,
@@ -24,9 +27,8 @@ from crucis.mcp._workspace import (
     validate_source_input,
 )
 
-# ---------------------------------------------------------------------------
+
 # FastMCP instance
-# ---------------------------------------------------------------------------
 
 _INSTRUCTIONS = (
     "Crucis is an autonomy scaffold for code-generating agents. It provides "
@@ -40,7 +42,11 @@ _INSTRUCTIONS = (
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP):
-    """Initialize workspace context for the server lifetime."""
+    """Initialize workspace context for the server lifetime.
+
+    Args:
+        server: FastMCP server instance.
+    """
     ctx = WorkspaceContext(workspace=resolve_workspace())
     yield ctx
 
@@ -48,19 +54,53 @@ async def _lifespan(server: FastMCP):
 mcp = FastMCP("Crucis", instructions=_INSTRUCTIONS, lifespan=_lifespan)
 
 
-# ---------------------------------------------------------------------------
+async def _health_check(request: Request) -> JSONResponse:
+    """Return a simple health status for monitoring and auth-exempt probes.
+
+    Args:
+        request: Incoming HTTP request (unused).
+
+    Returns:
+        JSON response with server status.
+    """
+    return JSONResponse({"status": "ok", "server": "crucis-mcp"})
+
+
+# Patch the health route into FastMCP's streamable HTTP app
+_original_streamable_http_app = mcp.streamable_http_app
+
+
+def _patched_streamable_http_app(**kwargs):
+    """Wrap ``streamable_http_app`` to add a /health route.
+
+    Returns:
+        Starlette application with /health route prepended.
+    """
+    app = _original_streamable_http_app(**kwargs)
+    app.routes.insert(0, Route("/health", _health_check))
+    return app
+
+
+mcp.streamable_http_app = _patched_streamable_http_app
+
+
 # Tool annotations
-# ---------------------------------------------------------------------------
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
 _MUTATING = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
 _DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
 _LLM_CALL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
 
+# Shared constants for MCP response envelopes
+_NEXT_STEPS = "next_steps"
+_ERR_TYPE_NOT_FOUND = "FileNotFoundError"
+_ERR_NO_CHECKPOINT = "No checkpoint found."
+_SCOPE_TESTS = "tests"
+_OUTPUT_TAIL_LIMIT = 4000
+_DEFAULT_TEST_DIR = "tests"
 
-# ---------------------------------------------------------------------------
+
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _suppress_stdout():
     """Redirect stdout to prevent Rich output from corrupting STDIO JSON-RPC."""
@@ -68,12 +108,24 @@ def _suppress_stdout():
 
 
 def _restore_stdout(original):
-    """Restore original stdout."""
+    """Restore original stdout.
+
+    Args:
+        original: The original sys.stdout object.
+    """
     sys.stdout = original
 
 
 def _error(exc: Exception, *, hint: str = "") -> dict:
-    """Build a structured error response with type info and actionable hint."""
+    """Build a structured error response with type info and actionable hint.
+
+    Args:
+        exc: The exception to report.
+        hint: Optional actionable hint for the caller.
+
+    Returns:
+        Dict with error message, type, and optional hint.
+    """
     resp = {"error": str(exc), "error_type": type(exc).__name__}
     if hint:
         resp["hint"] = hint
@@ -83,8 +135,12 @@ def _error(exc: Exception, *, hint: str = "") -> dict:
 def _build_task_objective(task_name: str, objective):
     """Extract a single-task objective from a multi-task objective.
 
-    Returns the original objective unchanged when task_name is None or
-    not found in the task list.
+    Args:
+        task_name: Target task name to extract.
+        objective: Multi-task parsed objective.
+
+    Returns:
+        Single-task objective, or original if task_name is None or not found.
     """
     if not task_name or not objective.tasks:
         return objective
@@ -107,7 +163,13 @@ def _build_task_objective(task_name: str, objective):
 def _pre_validate(ctx: WorkspaceContext, obj_path: Path, prof_path: Path) -> str | None:
     """Quick pre-flight check before long-running operations.
 
-    Returns an error message if something is wrong, None if OK.
+    Args:
+        ctx: Workspace context.
+        obj_path: Resolved objective file path.
+        prof_path: Resolved profiles file path.
+
+    Returns:
+        Error message string if something is wrong, None if OK.
     """
     from crucis.constraints.loader import load_profiles
     from crucis.intake.objective import parse_objective
@@ -136,7 +198,11 @@ def _pre_validate(ctx: WorkspaceContext, obj_path: Path, prof_path: Path) -> str
 def _ctx(workspace: str | None = None) -> WorkspaceContext:
     """Build a WorkspaceContext from an optional override.
 
-    Enforces workspace authorization on every tool call.
+    Args:
+        workspace: Optional workspace path override.
+
+    Returns:
+        Authorized WorkspaceContext instance.
     """
     ws = resolve_workspace(workspace)
     check_workspace_authorized(ws)
@@ -144,7 +210,11 @@ def _ctx(workspace: str | None = None) -> WorkspaceContext:
 
 
 def _ensure_settings(ws: Path) -> None:
-    """Load runtime settings and apply agent config to env."""
+    """Load runtime settings and apply agent config to env.
+
+    Args:
+        ws: Workspace root path.
+    """
     from crucis.persistence.settings import apply_agent_settings_to_env, try_load_runtime_settings
 
     settings = try_load_runtime_settings(ws)
@@ -153,7 +223,16 @@ def _ensure_settings(ws: Path) -> None:
 
 
 def _checkpoint_payload(state, checkpoint_path: Path, optimizer_status) -> dict:
-    """Build machine-readable checkpoint summary."""
+    """Build machine-readable checkpoint summary.
+
+    Args:
+        state: Checkpoint state with task progress.
+        checkpoint_path: Path to the checkpoint file.
+        optimizer_status: Optimizer status or None.
+
+    Returns:
+        Dict with summary counts, task list, and optimizer info.
+    """
     complete_count = sum(
         1 for p in state.task_progress if p.status.value == "complete"
     )
@@ -204,6 +283,9 @@ async def crucis_init(
         name: Project name for the objective template.
         existing_codebase: Treat workspace as an existing codebase.
         workspace: Directory to scaffold. Defaults to CRUCIS_WORKSPACE or cwd.
+
+    Returns:
+        Dict with created files and next steps, or error dict.
     """
     from crucis.intake.scaffold import detect_existing_codebase, scaffold_workspace
 
@@ -217,7 +299,7 @@ async def crucis_init(
             "workspace": str(ws),
             "created": [str(p) for p in created],
             "existing_codebase": existing_codebase,
-            "next_steps": [
+            _NEXT_STEPS: [
                 "Edit objective.yaml to define your function, evals, and target files",
                 "Run crucis_validate to check the objective",
                 "Run crucis_doctor to verify environment prerequisites",
@@ -249,6 +331,9 @@ async def crucis_run(
         profiles: Path to constraint profiles YAML.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with checkpoint summary and next steps, or error dict.
     """
     from crucis.core.loop import run_fit
     from crucis.persistence.policy import load_optimizer_status
@@ -281,11 +366,11 @@ async def crucis_run(
         opt_status = load_optimizer_status(ctx.workspace)
         payload = _checkpoint_payload(state, ckpt_path, opt_status)
         if state.evaluation_passed:
-            payload["next_steps"] = [
+            payload[_NEXT_STEPS] = [
                 "Use crucis_summary to review detailed per-task results",
             ]
         else:
-            payload["next_steps"] = [
+            payload[_NEXT_STEPS] = [
                 "Use crucis_summary with task_name to inspect failing tasks",
                 "Use crucis_reset with task_names to retry specific tasks",
             ]
@@ -316,6 +401,9 @@ async def crucis_run_fit(
         profiles: Path to constraint profiles YAML.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with checkpoint summary and next steps, or error dict.
     """
     from crucis.core.loop import run_fit
     from crucis.persistence.policy import load_optimizer_status
@@ -345,7 +433,7 @@ async def crucis_run_fit(
 
         opt_status = load_optimizer_status(ctx.workspace)
         payload = _checkpoint_payload(state, ckpt_path, opt_status)
-        payload["next_steps"] = [
+        payload[_NEXT_STEPS] = [
             "Use crucis_summary to review adversarial reports",
             "Use crucis_run_evaluate to implement and verify code",
         ]
@@ -376,6 +464,9 @@ async def crucis_run_evaluate(
         profiles: Path to constraint profiles YAML.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with pass/fail status and next steps, or error dict.
     """
     from crucis.config import Config
     from crucis.constraints.loader import load_profiles, resolve_constraints
@@ -404,7 +495,7 @@ async def crucis_run_evaluate(
             use_sandbox = False
 
         constraints_map = {
-            p.name: resolve_constraints(objective, profiles_data, p.name, scope="tests")
+            p.name: resolve_constraints(objective, profiles_data, p.name, scope=_SCOPE_TESTS)
             for p in state.task_progress
         }
         impl_constraints_map = {
@@ -415,7 +506,7 @@ async def crucis_run_evaluate(
         loop = asyncio.get_event_loop()
         passed = await loop.run_in_executor(None, lambda: run_evaluation(
             state, config,
-            test_dir=ctx.workspace / "tests",
+            test_dir=ctx.workspace / _DEFAULT_TEST_DIR,
             objective=objective,
             constraints_map=constraints_map,
             implementation_constraints_map=impl_constraints_map,
@@ -434,9 +525,9 @@ async def crucis_run_evaluate(
             "tasks_total": len(state.task_progress),
         }
         if passed:
-            result["next_steps"] = ["All tasks passed. Implementation is verified."]
+            result[_NEXT_STEPS] = ["All tasks passed. Implementation is verified."]
         else:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Use crucis_summary with task_name to inspect failures",
                 "Fix the objective or implementation and re-run",
             ]
@@ -464,6 +555,9 @@ async def crucis_run_plan(
         force: Regenerate plan even if plan.md already exists.
         profiles: Path to constraint profiles YAML.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with plan path, content, and next steps, or error dict.
     """
     from crucis.config import Config
     from crucis.constraints.loader import load_profiles, resolve_constraints
@@ -497,7 +591,7 @@ async def crucis_run_plan(
         return {
             "plan_path": str(created),
             "content": plan_content,
-            "next_steps": [
+            _NEXT_STEPS: [
                 "Review the plan, then run crucis_run or crucis_run_fit to execute",
             ],
         }
@@ -522,6 +616,9 @@ async def crucis_dry_run(
         task_names: Optional list of specific task names.
         profiles: Path to constraint profiles YAML.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with task previews and resolved paths, or error dict.
     """
     from crucis.constraints.loader import load_profiles, resolve_constraints
     from crucis.core.planner import load_plan
@@ -547,7 +644,7 @@ async def crucis_dry_run(
         previews = []
         for task in effective_tasks:
             constraints = resolve_constraints(
-                objective, profiles_data, task.name, scope="tests"
+                objective, profiles_data, task.name, scope=_SCOPE_TESTS
             )
             # Check existing progress
             existing_status = "pending"
@@ -583,7 +680,7 @@ async def crucis_dry_run(
                 "profiles": str(prof_path),
                 "checkpoint": str(ckpt_path),
             },
-            "next_steps": [
+            _NEXT_STEPS: [
                 "If everything looks correct, run crucis_run or crucis_run_fit",
                 "Use crucis_get_prompt to preview the exact prompt for a specific task",
             ],
@@ -607,6 +704,9 @@ async def crucis_reset(
         task_names: Specific tasks to reset. Omit to reset everything.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with reset confirmation and next steps, or error dict.
     """
     from crucis.models import TrainingStatus
     from crucis.persistence.checkpoint import load_checkpoint, save_checkpoint
@@ -621,7 +721,7 @@ async def crucis_reset(
             return {
                 "reset": "all",
                 "checkpoint": str(ckpt_path),
-                "next_steps": ["Run crucis_run or crucis_run_fit to start fresh"],
+                _NEXT_STEPS: ["Run crucis_run or crucis_run_fit to start fresh"],
             }
 
         state = load_checkpoint(ckpt_path)
@@ -639,7 +739,7 @@ async def crucis_reset(
         return {
             "reset": reset_names,
             "checkpoint": str(ckpt_path),
-            "next_steps": ["Run crucis_run or crucis_run_fit to regenerate reset tasks"],
+            _NEXT_STEPS: ["Run crucis_run or crucis_run_fit to regenerate reset tasks"],
         }
     except Exception as exc:
         return _error(exc)
@@ -663,6 +763,9 @@ async def crucis_validate(
         profiles: Path to profiles YAML to validate references against.
         workspace: Workspace directory for resolving relative paths.
         static: Run only structural checks, skip LLM semantic review.
+
+    Returns:
+        Dict with validity status, issues, and next steps.
     """
     from crucis.config import Config
     from crucis.constraints.loader import load_profiles
@@ -708,19 +811,57 @@ async def crucis_validate(
             "profiles_valid": profiles_valid,
         }
         if valid:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Run crucis_doctor to check environment prerequisites",
                 "Run crucis_dry_run to preview the pipeline configuration",
                 "Run crucis_run to execute the full pipeline",
             ]
         else:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Fix the issues listed above in objective.yaml, then re-validate",
             ]
         return result
     except (ValueError, FileNotFoundError, WorkspaceNotAuthorizedError) as exc:
         return {"valid": False, "error": str(exc),
                 "hint": "Check that the file exists and is valid YAML."}
+
+
+def _task_next_steps(status_value: str) -> list[str]:
+    """Return contextual next steps for a task based on its status.
+
+    Args:
+        status_value: Task status string value.
+
+    Returns:
+        List of next-step instructions.
+    """
+    if status_value == "pending":
+        return ["Run crucis_run_fit to generate tests"]
+    if status_value in ("train_suite_generated", "train_suite_approved"):
+        return ["Run crucis_run_fit to continue adversarial review"]
+    if status_value == "adversarially_reviewed":
+        return ["Run crucis_run_evaluate to implement and verify"]
+    return ["Task is complete."]
+
+
+def _overview_next_steps(payload: dict) -> list[str]:
+    """Return contextual next steps for the pipeline overview.
+
+    Args:
+        payload: Summary payload with tasks and summary sections.
+
+    Returns:
+        List of next-step instructions.
+    """
+    summary = payload["summary"]
+    if summary["evaluation_passed"]:
+        return ["Pipeline complete. All tasks passed."]
+    if summary["ready_for_evaluation"]:
+        return ["All tasks ready. Run crucis_run_evaluate to implement."]
+    pending = [t["name"] for t in payload["tasks"] if t["status"] == "pending"]
+    if pending:
+        return [f"Run crucis_run_fit to process remaining tasks: {pending}"]
+    return ["Use crucis_summary with task_name to inspect individual tasks"]
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -739,6 +880,9 @@ async def crucis_summary(
         task_name: Optional task name for detailed single-task view.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with task status overview or detail, or error dict.
     """
     from crucis.persistence.checkpoint import load_checkpoint
     from crucis.persistence.policy import load_optimizer_status
@@ -748,7 +892,7 @@ async def crucis_summary(
         ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
         state = load_checkpoint(ckpt_path)
         if state is None:
-            return {"found": False, "error": f"No checkpoint at {ckpt_path}."}
+            return {"found": False, "error": f"No checkpoint at {ckpt_path}.", "error_type": _ERR_TYPE_NOT_FOUND}
 
         if task_name:
             for p in state.task_progress:
@@ -763,16 +907,7 @@ async def crucis_summary(
                             if p.adversarial_report is not None else None
                         ),
                     }
-                    # Contextual next steps based on task status
-                    status = p.status.value
-                    if status == "pending":
-                        detail["next_steps"] = ["Run crucis_run_fit to generate tests"]
-                    elif status in ("train_suite_generated", "train_suite_approved"):
-                        detail["next_steps"] = ["Run crucis_run_fit to continue adversarial review"]
-                    elif status == "adversarially_reviewed":
-                        detail["next_steps"] = ["Run crucis_run_evaluate to implement and verify"]
-                    elif status == "complete":
-                        detail["next_steps"] = ["Task is complete."]
+                    detail[_NEXT_STEPS] = _task_next_steps(p.status.value)
                     return detail
             available = [p.name for p in state.task_progress]
             return {
@@ -783,23 +918,7 @@ async def crucis_summary(
 
         opt_status = load_optimizer_status(ctx.workspace)
         payload = {"found": True, **_checkpoint_payload(state, ckpt_path, opt_status)}
-        # Add contextual next steps
-        ready = payload["summary"]["ready_for_evaluation"]
-        passed = payload["summary"]["evaluation_passed"]
-        if passed:
-            payload["next_steps"] = ["Pipeline complete. All tasks passed."]
-        elif ready:
-            payload["next_steps"] = ["All tasks ready. Run crucis_run_evaluate to implement."]
-        else:
-            pending = [t["name"] for t in payload["tasks"] if t["status"] == "pending"]
-            if pending:
-                payload["next_steps"] = [
-                    f"Run crucis_run_fit to process remaining tasks: {pending}",
-                ]
-            else:
-                payload["next_steps"] = [
-                    "Use crucis_summary with task_name to inspect individual tasks",
-                ]
+        payload[_NEXT_STEPS] = _overview_next_steps(payload)
         return payload
     except Exception as exc:
         return _error(exc)
@@ -825,6 +944,9 @@ async def crucis_doctor(
         profiles: Optional profiles file to validate.
         checkpoint: Optional checkpoint file to validate.
         require_docker: Fail when Docker is unavailable.
+
+    Returns:
+        Dict with diagnostic checks and next steps, or error dict.
     """
     from crucis.config import Config
     from crucis.diagnostics import doctor_report_payload, run_doctor
@@ -848,12 +970,12 @@ async def crucis_doctor(
         payload = doctor_report_payload(report)
         failed = [c for c in payload.get("checks", []) if c.get("status") == "fail"]
         if failed:
-            payload["next_steps"] = [
+            payload[_NEXT_STEPS] = [
                 f"Fix: {c['message']}" + (f" — {c['hint']}" if c.get("hint") else "")
                 for c in failed
             ]
         else:
-            payload["next_steps"] = ["Environment is ready. Run crucis_run to start."]
+            payload[_NEXT_STEPS] = ["Environment is ready. Run crucis_run to start."]
         return payload
     except Exception as exc:
         return _error(exc)
@@ -874,6 +996,9 @@ async def crucis_promote(
         run_id: Run ID of the candidate to promote.
         force: Promote even when candidate-ready metadata is missing.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with promotion status, or error dict.
     """
     from crucis.persistence.policy import (
         OptimizerState,
@@ -944,6 +1069,9 @@ async def crucis_optimizer_worker(
     Args:
         loop: Run continuously instead of one-shot.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with exit code and next steps, or error dict.
     """
     from crucis.execution.optimizer import run_optimizer_worker
     from crucis.persistence.settings import is_optimizer_enabled
@@ -965,7 +1093,7 @@ async def crucis_optimizer_worker(
             "workspace": str(ws),
             "mode": "loop" if loop else "once",
             "exit_code": exit_code,
-            "next_steps": (
+            _NEXT_STEPS: (
                 ["Use crucis_promote to promote the winning candidate"]
                 if exit_code == 0 else
                 ["Check optimizer logs for errors"]
@@ -982,6 +1110,7 @@ async def crucis_check_constraints(
     scope: str = "tests",
     objective_path: str | None = None,
     profiles: str | None = None,
+    workspace: str | None = None,
 ) -> dict:
     """Check Python source code against Crucis constraint profiles.
 
@@ -995,6 +1124,10 @@ async def crucis_check_constraints(
         scope: "tests" or "implementation" constraint scope.
         objective_path: Path to objective YAML for profile resolution.
         profiles: Path to profiles YAML.
+        workspace: Workspace directory root.
+
+    Returns:
+        Dict with primary/secondary constraint results, or error dict.
     """
     from crucis.constraints.checker import check_constraints
     from crucis.constraints.loader import load_profiles, resolve_constraints
@@ -1002,7 +1135,7 @@ async def crucis_check_constraints(
 
     try:
         validate_source_input(source_code)
-        ctx = _ctx()
+        ctx = _ctx(workspace)
         obj_path = safe_resolve_path(objective_path, ctx.objective_path, ctx.workspace)
         prof_path = safe_resolve_path(profiles, ctx.profiles_path, ctx.workspace)
 
@@ -1025,15 +1158,15 @@ async def crucis_check_constraints(
             },
         }
         if not primary_result.passed:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Fix required constraint violations (these are blocking), then re-check",
             ]
         elif not secondary_result.passed:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Required constraints pass. Advisory violations are non-blocking — fix if possible",
             ]
         else:
-            result["next_steps"] = ["All constraints pass."]
+            result[_NEXT_STEPS] = ["All constraints pass."]
         return result
     except (InputTooLargeError, PathTraversalError, WorkspaceNotAuthorizedError) as exc:
         return _error(exc)
@@ -1044,6 +1177,136 @@ async def crucis_check_constraints(
 # ===================================================================
 # PART B: Step-by-Step Tools (6) — Agent-as-Implementer Mode
 # ===================================================================
+
+
+def _prompt_generation(ctx, objective, task_name, profiles, constraint_feedback, adversary_feedback):
+    """Build the generation-step prompt and response envelope.
+
+    Args:
+        ctx: Workspace context.
+        objective: Parsed objective.
+        task_name: Target task name.
+        profiles: Profiles path override.
+        constraint_feedback: Prior constraint violation feedback.
+        adversary_feedback: Prior adversarial feedback.
+
+    Returns:
+        Dict with step, task_name, prompt, and next_steps.
+    """
+    from crucis.constraints.loader import load_profiles, resolve_constraints
+    from crucis.core.planner import load_plan
+    from crucis.core.prompts import build_generation_prompt
+
+    prof_path = safe_resolve_path(profiles, ctx.profiles_path, ctx.workspace)
+    profiles_data = load_profiles(prof_path)
+    constraints = resolve_constraints(objective, profiles_data, task_name, scope=_SCOPE_TESTS)
+    task_obj = _build_task_objective(task_name, objective)
+
+    plan_content = load_plan(ctx.workspace) or ""
+    prompt = build_generation_prompt(
+        task_obj, constraints,
+        constraint_feedback=constraint_feedback,
+        adversarial_feedback=adversary_feedback,
+        plan_content=plan_content,
+    )
+    return {
+        "step": "generation",
+        "task_name": task_name,
+        "prompt": prompt,
+        _NEXT_STEPS: [
+            "Write a complete pytest test suite based on this prompt",
+            "Use crucis_submit_test_suite to validate and save it",
+        ],
+    }
+
+
+def _prompt_adversary(ctx, objective, task_name, profiles, checkpoint):
+    """Build the adversary-step prompt and response envelope.
+
+    Args:
+        ctx: Workspace context.
+        objective: Parsed objective.
+        task_name: Target task name.
+        profiles: Profiles path override.
+        checkpoint: Checkpoint path override.
+
+    Returns:
+        Dict with step, task_name, prompt, and next_steps, or error dict.
+    """
+    from crucis.constraints.loader import load_profiles, resolve_constraints
+    from crucis.core.prompts import build_adversary_prompt
+    from crucis.persistence.checkpoint import load_checkpoint
+
+    ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
+    state = load_checkpoint(ckpt_path)
+    if state is None:
+        return {"error": "No checkpoint found. Generate tests first.", "error_type": _ERR_TYPE_NOT_FOUND}
+
+    train_source = None
+    for p in state.task_progress:
+        if p.name == task_name:
+            train_source = p.train_suite_source
+            break
+    if not train_source:
+        return {"error": f"No test suite found for task '{task_name}'."}
+
+    prof_path = safe_resolve_path(profiles, ctx.profiles_path, ctx.workspace)
+    profiles_data = load_profiles(prof_path)
+    constraints = resolve_constraints(objective, profiles_data, task_name, scope=_SCOPE_TESTS)
+    task_obj = _build_task_objective(task_name, objective)
+
+    prompt = build_adversary_prompt(train_source, task_obj, constraints)
+    return {
+        "step": "adversary",
+        "task_name": task_name,
+        "prompt": prompt,
+        _NEXT_STEPS: [
+            "Review the test suite for weaknesses based on this prompt",
+            "Use crucis_submit_adversarial_report to save your findings",
+            "Use crucis_run_probe to verify test robustness with a cheating probe",
+        ],
+    }
+
+
+def _prompt_evaluation(ctx, checkpoint, error_feedback):
+    """Build the evaluation-step prompt and response envelope.
+
+    Args:
+        ctx: Workspace context.
+        checkpoint: Checkpoint path override.
+        error_feedback: Prior error feedback for retry.
+
+    Returns:
+        Dict with step, prompt, test_paths, and next_steps, or error dict.
+    """
+    from crucis.core.loop import _write_generated_tests
+    from crucis.core.prompts import build_evaluation_prompt
+    from crucis.persistence.checkpoint import load_checkpoint
+
+    ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
+    state = load_checkpoint(ckpt_path)
+    if state is None:
+        return {"error": "No checkpoint found. Run fit phase first.", "error_type": _ERR_TYPE_NOT_FOUND}
+
+    test_dir = ctx.workspace / _DEFAULT_TEST_DIR
+    test_dir.mkdir(parents=True, exist_ok=True)
+    test_paths = _write_generated_tests(state, test_dir)
+
+    curriculum_path = ctx.workspace / "brief.md"
+    prompt = build_evaluation_prompt(
+        test_paths,
+        curriculum_path=curriculum_path if curriculum_path.exists() else None,
+        error_feedback=error_feedback,
+    )
+    return {
+        "step": "evaluation",
+        "prompt": prompt,
+        "test_paths": [str(p) for p in test_paths],
+        _NEXT_STEPS: [
+            "Implement code that passes all the test files listed above",
+            "Use crucis_verify_implementation to verify your code",
+        ],
+    }
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -1075,16 +1338,11 @@ async def crucis_get_prompt(
         constraint_feedback: Constraint violation feedback for generation retry.
         adversary_feedback: Adversarial feedback for generation retry.
         error_feedback: Error feedback for evaluation retry.
+
+    Returns:
+        Dict with prompt text and next steps, or error dict.
     """
-    from crucis.constraints.loader import load_profiles, resolve_constraints
-    from crucis.core.planner import load_plan
-    from crucis.core.prompts import (
-        build_adversary_prompt,
-        build_evaluation_prompt,
-        build_generation_prompt,
-    )
     from crucis.intake.objective import parse_objective
-    from crucis.persistence.checkpoint import load_checkpoint
 
     try:
         ctx = _ctx(workspace)
@@ -1093,88 +1351,11 @@ async def crucis_get_prompt(
         objective = parse_objective(obj_path)
 
         if step == "generation":
-            prof_path = safe_resolve_path(profiles, ctx.profiles_path, ctx.workspace)
-            profiles_data = load_profiles(prof_path)
-            constraints = resolve_constraints(objective, profiles_data, task_name, scope="tests")
-            task_obj = _build_task_objective(task_name, objective)
-
-            plan_content = load_plan(ctx.workspace) or ""
-            prompt = build_generation_prompt(
-                task_obj, constraints,
-                constraint_feedback=constraint_feedback,
-                adversarial_feedback=adversary_feedback,
-                plan_content=plan_content,
-            )
-            return {
-                "step": "generation",
-                "task_name": task_name,
-                "prompt": prompt,
-                "next_steps": [
-                    "Write a complete pytest test suite based on this prompt",
-                    "Use crucis_submit_test_suite to validate and save it",
-                ],
-            }
-
+            return _prompt_generation(ctx, objective, task_name, profiles, constraint_feedback, adversary_feedback)
         elif step == "adversary":
-            ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
-            state = load_checkpoint(ckpt_path)
-            if state is None:
-                return {"error": "No checkpoint found. Generate tests first."}
-
-            train_source = None
-            for p in state.task_progress:
-                if p.name == task_name:
-                    train_source = p.train_suite_source
-                    break
-            if not train_source:
-                return {"error": f"No test suite found for task '{task_name}'."}
-
-            prof_path = safe_resolve_path(profiles, ctx.profiles_path, ctx.workspace)
-            profiles_data = load_profiles(prof_path)
-            constraints = resolve_constraints(objective, profiles_data, task_name, scope="tests")
-            task_obj = _build_task_objective(task_name, objective)
-
-            prompt = build_adversary_prompt(train_source, task_obj, constraints)
-            return {
-                "step": "adversary",
-                "task_name": task_name,
-                "prompt": prompt,
-                "next_steps": [
-                    "Review the test suite for weaknesses based on this prompt",
-                    "Use crucis_submit_adversarial_report to save your findings",
-                    "Use crucis_run_probe to verify test robustness with a cheating probe",
-                ],
-            }
-
+            return _prompt_adversary(ctx, objective, task_name, profiles, checkpoint)
         elif step == "evaluation":
-            ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
-            state = load_checkpoint(ckpt_path)
-            if state is None:
-                return {"error": "No checkpoint found. Run fit phase first."}
-
-            # Write test files and build curriculum path
-            from crucis.core.loop import _write_generated_tests
-
-            test_dir = ctx.workspace / "tests"
-            test_dir.mkdir(parents=True, exist_ok=True)
-            test_paths = _write_generated_tests(state, test_dir)
-
-            curriculum_path = ctx.workspace / "brief.md"
-            prompt = build_evaluation_prompt(
-                test_paths,
-                curriculum_path=curriculum_path if curriculum_path.exists() else None,
-                error_feedback=error_feedback,
-            )
-            return {
-                "step": "evaluation",
-                "prompt": prompt,
-                "test_paths": [str(p) for p in test_paths],
-                "next_steps": [
-                    "Implement code that passes all the test files listed above",
-                    "Use crucis_verify_implementation to verify your code",
-                ],
-            }
-
+            return _prompt_evaluation(ctx, checkpoint, error_feedback)
         else:
             return _error(
                 ValueError(f"Unknown step '{step}'."),
@@ -1183,6 +1364,28 @@ async def crucis_get_prompt(
 
     except Exception as exc:
         return _error(exc)
+
+
+def _upsert_task_suite(state, task_name, test_source):
+    """Update or create a task's test suite in checkpoint state.
+
+    Args:
+        state: Checkpoint state to update in place.
+        task_name: Name of the task.
+        test_source: Test suite source code.
+    """
+    from crucis.models import TaskProgress, TrainingStatus
+
+    for p in state.task_progress:
+        if p.name == task_name:
+            p.train_suite_source = test_source
+            p.status = TrainingStatus.train_suite_approved
+            return
+    state.task_progress.append(TaskProgress(
+        name=task_name,
+        status=TrainingStatus.train_suite_approved,
+        train_suite_source=test_source,
+    ))
 
 
 @mcp.tool(annotations=_MUTATING)
@@ -1207,11 +1410,14 @@ async def crucis_submit_test_suite(
         profiles: Path to constraint profiles YAML.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with acceptance status, constraint results, and next steps.
     """
     from crucis.constraints.loader import load_profiles, resolve_constraints
     from crucis.core.loop import validate_train_suite_constraints, validate_train_suite_syntax
     from crucis.intake.objective import parse_objective
-    from crucis.models import CheckpointState, TaskProgress, TrainingStatus
+    from crucis.models import CheckpointState, TaskProgress
     from crucis.persistence.checkpoint import load_checkpoint, save_checkpoint
 
     try:
@@ -1224,12 +1430,12 @@ async def crucis_submit_test_suite(
         # Validate syntax
         syntax_ok, syntax_msg = validate_train_suite_syntax(test_source)
         if not syntax_ok:
-            return {"accepted": False, "syntax_valid": False, "error": syntax_msg}
+            return {"accepted": False, "syntax_valid": False, "error": syntax_msg, "error_type": "SyntaxError"}
 
         # Validate constraints
         objective = parse_objective(obj_path)
         profiles_data = load_profiles(prof_path)
-        constraints = resolve_constraints(objective, profiles_data, task_name, scope="tests")
+        constraints = resolve_constraints(objective, profiles_data, task_name, scope=_SCOPE_TESTS)
         constraints_ok, constraints_msg = validate_train_suite_constraints(test_source, constraints)
 
         # Load or create checkpoint
@@ -1240,21 +1446,7 @@ async def crucis_submit_test_suite(
                 task_progress=[TaskProgress(name=t.name) for t in effective_tasks]
             )
 
-        # Update task progress
-        found = False
-        for p in state.task_progress:
-            if p.name == task_name:
-                p.train_suite_source = test_source
-                p.status = TrainingStatus.train_suite_approved
-                found = True
-                break
-
-        if not found:
-            state.task_progress.append(TaskProgress(
-                name=task_name,
-                status=TrainingStatus.train_suite_approved,
-                train_suite_source=test_source,
-            ))
+        _upsert_task_suite(state, task_name, test_source)
 
         save_checkpoint(state, ckpt_path)
 
@@ -1279,11 +1471,11 @@ async def crucis_submit_test_suite(
             "task_status": "train_suite_approved",
         }
         if not constraints_ok:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Fix constraint violations in your test suite and resubmit",
             ]
         else:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Use crucis_get_prompt(step='adversary') to review your tests",
                 "Or use crucis_run_probe to check test robustness directly",
             ]
@@ -1316,6 +1508,9 @@ async def crucis_submit_adversarial_report(
         correctness_issues: Issues with test correctness itself.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with acceptance status and findings count, or error dict.
     """
     from crucis.models import AdversarialReport, TrainingStatus
     from crucis.persistence.checkpoint import load_checkpoint, save_checkpoint
@@ -1325,7 +1520,7 @@ async def crucis_submit_adversarial_report(
         ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
         state = load_checkpoint(ckpt_path)
         if state is None:
-            return {"error": "No checkpoint found. Submit test suite first."}
+            return {"error": "No checkpoint found. Submit test suite first.", "error_type": _ERR_TYPE_NOT_FOUND}
 
         report = AdversarialReport(
             attack_vectors=attack_vectors,
@@ -1355,7 +1550,7 @@ async def crucis_submit_adversarial_report(
                 "suggested_probe_tests": len(suggested_probe_tests),
                 "correctness_issues": len(correctness_issues or []),
             },
-            "next_steps": [
+            _NEXT_STEPS: [
                 "Use crucis_run_probe to run a cheating probe against the tests",
                 "If probe passes (tests are weak), regenerate tests with feedback",
             ],
@@ -1382,6 +1577,9 @@ async def crucis_run_probe(
         objective_path: Path to objective YAML.
         checkpoint: Path to checkpoint JSON.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with probe result and robustness assessment, or error dict.
     """
     from crucis.config import Config
     from crucis.core.adversary import run_adversarial_probe
@@ -1396,7 +1594,7 @@ async def crucis_run_probe(
 
         state = load_checkpoint(ckpt_path)
         if state is None:
-            return {"error": "No checkpoint found."}
+            return {"error": _ERR_NO_CHECKPOINT, "error_type": _ERR_TYPE_NOT_FOUND}
 
         train_source = None
         for p in state.task_progress:
@@ -1421,12 +1619,12 @@ async def crucis_run_probe(
             "tests_are_weak": probe_passed,
         }
         if probe_passed:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Tests are WEAK — a cheating implementation passed them",
                 "Regenerate tests: crucis_get_prompt(step='generation') with adversary_feedback",
             ]
         else:
-            result["next_steps"] = [
+            result[_NEXT_STEPS] = [
                 "Tests are robust. Use crucis_write_tests to materialize them to disk",
                 "Then implement code and use crucis_verify_implementation",
             ]
@@ -1438,7 +1636,7 @@ async def crucis_run_probe(
 @mcp.tool(annotations=_MUTATING)
 async def crucis_write_tests(
     checkpoint: str | None = None,
-    test_dir: str = "tests",
+    test_dir: str = _DEFAULT_TEST_DIR,
     workspace: str | None = None,
 ) -> dict:
     """Write test suites from checkpoint to disk as pytest files.
@@ -1450,6 +1648,9 @@ async def crucis_write_tests(
         checkpoint: Path to checkpoint JSON.
         test_dir: Directory for test files (default: "tests").
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with written file paths and count, or error dict.
     """
     from crucis.core.loop import _write_generated_tests
     from crucis.persistence.checkpoint import load_checkpoint
@@ -1459,7 +1660,7 @@ async def crucis_write_tests(
         ckpt_path = safe_resolve_path(checkpoint, ctx.checkpoint_path, ctx.workspace)
         state = load_checkpoint(ckpt_path)
         if state is None:
-            return {"error": "No checkpoint found."}
+            return {"error": _ERR_NO_CHECKPOINT, "error_type": _ERR_TYPE_NOT_FOUND}
 
         target_dir = ctx.workspace / test_dir
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -1467,7 +1668,7 @@ async def crucis_write_tests(
         return {
             "written": [str(p) for p in written],
             "test_count": len(written),
-            "next_steps": [
+            _NEXT_STEPS: [
                 "Implement code that passes these tests",
                 "Use crucis_verify_implementation to verify your implementation",
             ],
@@ -1476,13 +1677,119 @@ async def crucis_write_tests(
         return _error(exc)
 
 
+def _collect_verify_test_paths(state, target_dir: Path, task_name: str | None) -> list[Path]:
+    """Collect existing test file paths for verification.
+
+    Args:
+        state: Checkpoint state with task progress.
+        target_dir: Directory containing test files.
+        task_name: Optional filter for a specific task.
+
+    Returns:
+        List of existing test file paths.
+    """
+    from crucis.core.loop import _validated_unit_name
+
+    paths = []
+    for p in state.task_progress:
+        if task_name and p.name != task_name:
+            continue
+        if not p.train_suite_source:
+            continue
+        safe_name = _validated_unit_name(p.name, "VERIFY")
+        path = target_dir / f"test_{safe_name}.py"
+        if path.exists():
+            paths.append(path)
+    return paths
+
+
+async def _run_holdouts(loop, state, objective, target_dir, use_sandbox, task_name):
+    """Run holdout evaluations and return pass status and total count.
+
+    Args:
+        loop: Async event loop.
+        state: Checkpoint state.
+        objective: Parsed objective.
+        target_dir: Test directory.
+        use_sandbox: Whether to use Docker sandbox.
+        task_name: Optional task name filter.
+
+    Returns:
+        Tuple of (holdout_passed, holdout_total).
+    """
+    from crucis.core.loop import _collect_holdout_eval_specs, _run_holdout_eval_checks
+
+    holdout_specs = _collect_holdout_eval_specs(state, objective)
+    if task_name:
+        holdout_specs = {k: v for k, v in holdout_specs.items() if k == task_name}
+
+    holdout_total = sum(len(v.holdout_evals) for v in holdout_specs.values())
+    if not holdout_specs:
+        return True, holdout_total
+
+    holdout_passed, _ = await loop.run_in_executor(
+        None, lambda: _run_holdout_eval_checks(target_dir, use_sandbox, holdout_specs)
+    )
+    return holdout_passed, holdout_total
+
+
+def _trim_test_output(test_output: str | None) -> str:
+    """Trim test output to the tail where failures appear.
+
+    Args:
+        test_output: Raw pytest output string.
+
+    Returns:
+        Trimmed output with truncation header if needed.
+    """
+    if not test_output:
+        return ""
+    if len(test_output) <= _OUTPUT_TAIL_LIMIT:
+        return test_output
+    trimmed = test_output[-_OUTPUT_TAIL_LIMIT:]
+    return f"[...truncated {len(test_output) - _OUTPUT_TAIL_LIMIT} chars...]\n" + trimmed
+
+
+def _build_verify_result(tests_passed, holdout_passed, holdout_total, test_output):
+    """Build the verification response envelope.
+
+    Args:
+        tests_passed: Whether pytest tests passed.
+        holdout_passed: Whether holdout evals passed.
+        holdout_total: Total number of holdout evals.
+        test_output: Raw pytest output.
+
+    Returns:
+        Dict with verification results and next steps.
+    """
+    overall = tests_passed and holdout_passed
+    result = {
+        "tests_passed": tests_passed,
+        "holdout_passed": holdout_passed,
+        "overall": overall,
+        "test_output": _trim_test_output(test_output),
+        "holdout_total": holdout_total,
+    }
+    if overall:
+        result[_NEXT_STEPS] = ["All tests and holdout evals pass. Implementation is verified."]
+    else:
+        steps = []
+        if not tests_passed:
+            steps.append("Fix failing tests — see test_output for pytest failures")
+        if not holdout_passed:
+            steps.append("Fix holdout eval failures — hidden evals are not passing")
+        steps.append("Re-run crucis_verify_implementation after fixing")
+        result[_NEXT_STEPS] = steps
+    return result
+
+
 @mcp.tool(annotations=_READ_ONLY)
 async def crucis_verify_implementation(
     task_name: str | None = None,
     objective_path: str | None = None,
     no_sandbox: bool = True,
     checkpoint: str | None = None,
-    test_dir: str = "tests",
+    test_dir: str = _DEFAULT_TEST_DIR,
     workspace: str | None = None,
 ) -> dict:
     """Run tests + holdout evals to verify implementation correctness.
@@ -1498,12 +1805,14 @@ async def crucis_verify_implementation(
         checkpoint: Path to checkpoint JSON.
         test_dir: Directory containing test files.
         workspace: Workspace directory root.
+
+    Returns:
+        Dict with test/holdout pass status and output, or error dict.
     """
     from crucis.core.loop import (
         _collect_holdout_eval_specs,
         _run_holdout_eval_checks,
         _run_pytest_targets,
-        _validated_unit_name,
     )
     from crucis.intake.objective import parse_objective
     from crucis.persistence.checkpoint import load_checkpoint
@@ -1515,71 +1824,25 @@ async def crucis_verify_implementation(
 
         state = load_checkpoint(ckpt_path)
         if state is None:
-            return {"error": "No checkpoint found."}
+            return {"error": _ERR_NO_CHECKPOINT, "error_type": _ERR_TYPE_NOT_FOUND}
 
         objective = parse_objective(obj_path)
         target_dir = ctx.workspace / test_dir
-        use_sandbox = not no_sandbox
-
-        # Collect test file paths
-        test_paths = []
-        for p in state.task_progress:
-            if task_name and p.name != task_name:
-                continue
-            if not p.train_suite_source:
-                continue
-            safe_name = _validated_unit_name(p.name, "VERIFY")
-            path = target_dir / f"test_{safe_name}.py"
-            if path.exists():
-                test_paths.append(path)
-
+        test_paths = _collect_verify_test_paths(state, target_dir, task_name)
         if not test_paths:
-            return {"error": "No test files found.", "hint": "Run crucis_write_tests first to materialize tests to disk."}
+            return {"error": "No test files found.", "error_type": _ERR_TYPE_NOT_FOUND, "hint": "Run crucis_write_tests first to materialize tests to disk."}
 
+        use_sandbox = not no_sandbox
         loop = asyncio.get_event_loop()
-
-        # Run tests
         tests_passed, test_output = await loop.run_in_executor(
             None, lambda: _run_pytest_targets(ctx.workspace, test_paths, use_sandbox)
         )
 
-        # Run holdout evals
-        holdout_specs = _collect_holdout_eval_specs(state, objective)
-        if task_name:
-            holdout_specs = {k: v for k, v in holdout_specs.items() if k == task_name}
+        holdout_passed, holdout_total = await _run_holdouts(
+            loop, state, objective, target_dir, use_sandbox, task_name,
+        )
 
-        holdout_passed = True
-        holdout_output = ""
-        holdout_total = sum(len(v.holdout_evals) for v in holdout_specs.values())
-
-        if holdout_specs:
-            holdout_passed, holdout_output = await loop.run_in_executor(
-                None, lambda: _run_holdout_eval_checks(target_dir, use_sandbox, holdout_specs)
-            )
-
-        overall = tests_passed and holdout_passed
-        # Keep the tail of test output — that's where failures and the summary appear
-        trimmed_output = test_output[-4000:] if test_output and len(test_output) > 4000 else (test_output or "")
-        if test_output and len(test_output) > 4000:
-            trimmed_output = f"[...truncated {len(test_output) - 4000} chars...]\n" + trimmed_output
-        result = {
-            "tests_passed": tests_passed,
-            "holdout_passed": holdout_passed,
-            "overall": overall,
-            "test_output": trimmed_output,
-            "holdout_total": holdout_total,
-        }
-        if overall:
-            result["next_steps"] = ["All tests and holdout evals pass. Implementation is verified."]
-        else:
-            steps = []
-            if not tests_passed:
-                steps.append("Fix failing tests — see test_output for pytest failures")
-            if not holdout_passed:
-                steps.append("Fix holdout eval failures — hidden evals are not passing")
-            steps.append("Re-run crucis_verify_implementation after fixing")
-            result["next_steps"] = steps
-        return result
+        return _build_verify_result(tests_passed, holdout_passed, holdout_total, test_output)
     except Exception as exc:
         return _error(exc, hint="Ensure crucis_write_tests was called first.")
 
@@ -1591,7 +1854,11 @@ async def crucis_verify_implementation(
 
 @mcp.resource("crucis://objective")
 async def get_objective() -> str:
-    """The current Crucis objective definition parsed from objective.yaml."""
+    """The current Crucis objective definition parsed from objective.yaml.
+
+    Returns:
+        JSON string of the parsed objective, or error JSON.
+    """
     from crucis.intake.objective import parse_objective
 
     try:
@@ -1604,14 +1871,18 @@ async def get_objective() -> str:
 
 @mcp.resource("crucis://checkpoint")
 async def get_checkpoint() -> str:
-    """Current pipeline checkpoint state showing per-task progress."""
+    """Current pipeline checkpoint state showing per-task progress.
+
+    Returns:
+        JSON string of the checkpoint state, or error JSON.
+    """
     from crucis.persistence.checkpoint import load_checkpoint
 
     try:
         ctx = _ctx()
         state = load_checkpoint(ctx.checkpoint_path)
         if state is None:
-            return json.dumps({"error": "No checkpoint found."})
+            return json.dumps({"error": _ERR_NO_CHECKPOINT, "error_type": _ERR_TYPE_NOT_FOUND})
         return state.model_dump_json(indent=2)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
@@ -1619,7 +1890,14 @@ async def get_checkpoint() -> str:
 
 @mcp.resource("crucis://task/{task_name}/test-suite")
 async def get_task_test_suite(task_name: str) -> str:
-    """Generated pytest test suite source for a specific task."""
+    """Generated pytest test suite source for a specific task.
+
+    Args:
+        task_name: Name of the task to retrieve.
+
+    Returns:
+        Test suite source code, or status message.
+    """
     from crucis.persistence.checkpoint import load_checkpoint
 
     try:
@@ -1637,14 +1915,21 @@ async def get_task_test_suite(task_name: str) -> str:
 
 @mcp.resource("crucis://task/{task_name}/adversarial-report")
 async def get_task_adversarial_report(task_name: str) -> str:
-    """Adversarial review report for a specific task's test suite."""
+    """Adversarial review report for a specific task's test suite.
+
+    Args:
+        task_name: Name of the task to retrieve.
+
+    Returns:
+        JSON string of the adversarial report, or error JSON.
+    """
     from crucis.persistence.checkpoint import load_checkpoint
 
     try:
         ctx = _ctx()
         state = load_checkpoint(ctx.checkpoint_path)
         if state is None:
-            return json.dumps({"error": "No checkpoint found."})
+            return json.dumps({"error": _ERR_NO_CHECKPOINT, "error_type": _ERR_TYPE_NOT_FOUND})
         for p in state.task_progress:
             if p.name == task_name:
                 if p.adversarial_report is None:
@@ -1657,7 +1942,14 @@ async def get_task_adversarial_report(task_name: str) -> str:
 
 @mcp.resource("crucis://constraints/{profile_name}")
 async def get_constraint_profile(profile_name: str) -> str:
-    """Constraint profile definition showing required and advisory gates."""
+    """Constraint profile definition showing required and advisory gates.
+
+    Args:
+        profile_name: Name of the constraint profile to retrieve.
+
+    Returns:
+        JSON string of the profile definition, or error JSON.
+    """
     from crucis.constraints.loader import load_profiles
 
     try:
@@ -1675,7 +1967,11 @@ async def get_constraint_profile(profile_name: str) -> str:
 
 @mcp.resource("crucis://plan")
 async def get_plan() -> str:
-    """Generated plan.md content for test-suite generation strategy."""
+    """Generated plan.md content for test-suite generation strategy.
+
+    Returns:
+        Plan content string, or fallback message.
+    """
     from crucis.core.planner import load_plan
 
     try:
@@ -1688,7 +1984,11 @@ async def get_plan() -> str:
 
 @mcp.resource("crucis://curriculum")
 async def get_curriculum() -> str:
-    """Generated curriculum/brief markdown for the implementation agent."""
+    """Generated curriculum/brief markdown for the implementation agent.
+
+    Returns:
+        Brief content string, or fallback message.
+    """
     try:
         ctx = _ctx()
         brief_path = ctx.workspace / "brief.md"
@@ -1714,6 +2014,9 @@ async def setup_crucis(
     Args:
         function_name: Name of the function to verify.
         function_description: What the function should do.
+
+    Returns:
+        Prompt string with setup instructions.
     """
     return (
         f"Set up a Crucis verification pipeline for `{function_name}`: "
@@ -1746,6 +2049,9 @@ async def tdd_workflow(
 
     Args:
         objective_path: Path to the objective YAML file.
+
+    Returns:
+        Prompt string with TDD workflow steps.
     """
     return (
         f"Execute the full Crucis TDD pipeline using `{objective_path}`:\n\n"
@@ -1770,6 +2076,9 @@ async def verify_code_quality(
     Args:
         source_file: Path to the Python file to check.
         constraint_profile: Constraint profile name to use.
+
+    Returns:
+        Prompt string with constraint checking instructions.
     """
     return (
         f"Read `{source_file}` and use crucis_check_constraints to verify it "
@@ -1792,6 +2101,9 @@ async def harden_tests(
     Args:
         objective_path: Path to the objective YAML file.
         task_name: Optional specific task to harden.
+
+    Returns:
+        Prompt string with test hardening workflow.
     """
     task_filter = f" for task '{task_name}'" if task_name else ""
     task_arg = f' with task_names=["{task_name}"]' if task_name else ""
@@ -1813,6 +2125,9 @@ async def agent_tdd_workflow(
 
     Args:
         objective_path: Path to the objective YAML file.
+
+    Returns:
+        Prompt string with step-by-step TDD instructions.
     """
     return (
         f"Run Crucis TDD in step-by-step mode using `{objective_path}`.\n"
@@ -1840,9 +2155,7 @@ async def agent_tdd_workflow(
     )
 
 
-# ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
 
 def main():
     """Run the Crucis MCP server on STDIO transport."""

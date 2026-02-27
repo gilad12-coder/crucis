@@ -16,9 +16,7 @@ _MAX_PATH_LENGTH = 4096
 logger = logging.getLogger("crucis.mcp")
 
 
-# ---------------------------------------------------------------------------
 # Exceptions
-# ---------------------------------------------------------------------------
 
 class PathTraversalError(ValueError):
     """Raised when a resolved path escapes the workspace boundary."""
@@ -32,9 +30,7 @@ class InputTooLargeError(ValueError):
     """Raised when an input exceeds size limits."""
 
 
-# ---------------------------------------------------------------------------
 # Authorization
-# ---------------------------------------------------------------------------
 
 def check_workspace_authorized(workspace: Path) -> None:
     """Verify the workspace has opted into MCP server access.
@@ -61,9 +57,7 @@ def check_workspace_authorized(workspace: Path) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # Path safety
-# ---------------------------------------------------------------------------
 
 def validate_path_within_workspace(path: Path, workspace: Path) -> Path:
     """Ensure a resolved path stays within the workspace boundary.
@@ -122,9 +116,26 @@ def safe_resolve_path(
     return validate_path_within_workspace(resolved, workspace)
 
 
-# ---------------------------------------------------------------------------
 # Input validation
-# ---------------------------------------------------------------------------
+
+
+def validate_string_size(value: str, label: str = "input") -> None:
+    """Validate that a single string does not exceed the size limit.
+
+    Args:
+        value: String to check.
+        label: Human-readable label for error messages.
+
+    Raises:
+        InputTooLargeError: If the string exceeds the size limit.
+    """
+    size = len(value.encode("utf-8", errors="replace"))
+    if size > _MAX_SOURCE_INPUT_BYTES:
+        raise InputTooLargeError(
+            f"'{label}' is {size:,} bytes, exceeding the "
+            f"{_MAX_SOURCE_INPUT_BYTES:,} byte limit."
+        )
+
 
 def validate_source_input(source_code: str) -> None:
     """Validate source code input size.
@@ -143,9 +154,7 @@ def validate_source_input(source_code: str) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
 # Workspace context
-# ---------------------------------------------------------------------------
 
 @dataclass
 class WorkspaceContext:

@@ -453,7 +453,7 @@ def _add_optimizer_worker_parser(subs) -> None:
     """
     p = subs.add_parser(
         "optimizer-worker",
-        help=argparse.SUPPRESS,
+        help="[Experimental] Run the optimizer background worker",
         description="Run one queued optimizer drain pass by default, or continuous loop mode.",
     )
     p.add_argument(_WORKSPACE_FLAG, default=".", help=_WORKSPACE_HELP)
@@ -474,7 +474,7 @@ def _add_promote_parser(subs) -> None:
     """
     p = subs.add_parser(
         "promote",
-        help=argparse.SUPPRESS,
+        help="[Experimental] Promote an optimizer candidate policy",
         description="[Experimental] Replace the active optimizer policy with a winning candidate "
         "from a completed optimization run. Requires optimizer.enabled: true in settings.",
     )
@@ -571,6 +571,7 @@ def main(argv: list[str] | None = None) -> None:
         "init": run_init_command,
         "run": _handle_run_command,
         "status": _handle_status_command,
+        "summary": _handle_status_command,
         "validate": run_validate_command,
         "doctor": run_doctor_command,
         "optimizer-worker": run_optimizer_worker_command,

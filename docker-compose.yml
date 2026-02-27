@@ -1,0 +1,22 @@
+services:
+  crucis-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CRUCIS_WORKSPACE=/workspace
+      - CRUCIS_MCP_AUTHORIZED=1
+      # SECURITY: CRUCIS_MCP_AUTHORIZED=1 exposes a fully authorized MCP
+      # server. Always set a strong API key to prevent unauthenticated access.
+      - CRUCIS_MCP_API_KEY=${CRUCIS_MCP_API_KEY:?Set CRUCIS_MCP_API_KEY in your environment}
+      # Optional OTel:
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+    volumes:
+      # :rw required — the MCP server writes checkpoints and test files
+      - ./:/workspace:rw
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

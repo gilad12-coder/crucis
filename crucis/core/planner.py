@@ -113,8 +113,10 @@ def _extract_markdown(text: str) -> str:
     """
     stripped = text.strip()
     if stripped.startswith("```markdown") or stripped.startswith("```md"):
-        first_newline = stripped.index("\n")
-        stripped = stripped[first_newline + 1 :]
+        newline_pos = stripped.find("\n")
+        if newline_pos == -1:
+            return ""
+        stripped = stripped[newline_pos + 1 :]
     if stripped.startswith("```"):
         stripped = stripped[3:].lstrip("\n")
     if stripped.endswith("```"):
