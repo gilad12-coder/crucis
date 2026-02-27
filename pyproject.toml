@@ -84,6 +84,9 @@ pyink-use-majority-quotes = true
 
 [tool.pytest.ini_options]
 testpaths = ["crucis"]
+asyncio_mode = "auto"
+timeout = 10
 markers = [
     "llm: tests that call a real LLM (deselect with -m 'not llm')",
+    "slow: tests that take more than a few seconds (deselect with -m 'not slow')",
 ]

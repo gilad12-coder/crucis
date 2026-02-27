@@ -11,7 +11,7 @@ Each intervention maps to a specific human oversight role:
 | "Does the code actually work?" | Test-driven generation — agent iterates against a runnable test suite |
 | "Does it generalize?" | Holdout evals — hidden test cases verify beyond training examples |
 | "Are the tests too easy to cheat?" | Adversarial review + cheating probe |
-| "Is the code well-written?" | AST-based constraint checking (34 static analysis rules) |
+| "Is the code well-written?" | AST-based constraint checking (44 static analysis rules) |
 | "Did you handle the edge cases I care about?" | Behaviors — natural-language specs injected into prompts |
 
 The core idea: **any test suite, even an imperfect one, gives an implementation agent a tighter feedback loop than no tests at all.** Crucis automates the entire test-driven loop so the model can self-correct against something objective.

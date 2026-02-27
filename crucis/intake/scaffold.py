@@ -266,6 +266,12 @@ _DEFAULT_PROFILES = {
             "require_docstrings": True,
             "no_print_statements": True,
             "no_magic_numbers": True,
+            "max_methods_per_class": 20,
+            "max_fields_per_class": 10,
+            "max_class_lines": 200,
+            "max_efferent_coupling": 15,
+            "enforce_naming_conventions": True,
+            "no_unnecessary_else_after_return": True,
         },
     },
     "functions": {},
@@ -368,9 +374,7 @@ def scaffold_workspace(
     return created
 
 
-# ---------------------------------------------------------------------------
 # Agent-driven onboarding
-# ---------------------------------------------------------------------------
 
 _PROJECT_TYPE_PROFILES: dict[str, str] = {
     "library": "strict",
@@ -390,6 +394,16 @@ profiles:
     max_cyclomatic_complexity: 5
     max_lines_per_function: 30
     require_docstrings: true
+    max_methods_per_class: 10
+    max_fields_per_class: 7
+    max_class_lines: 100
+    max_weighted_methods_per_class: 50
+    max_efferent_coupling: 10
+    min_maintainability_index: 20.0
+    enforce_naming_conventions: true
+    no_single_char_names: true
+    no_unnecessary_else_after_return: true
+    no_len_as_condition: true
 
   recommended:
     max_cyclomatic_complexity: 10
@@ -406,6 +420,12 @@ profiles:
     no_print_statements: true
     no_debugger_statements: true
     no_magic_numbers: true
+    max_methods_per_class: 20
+    max_fields_per_class: 10
+    max_class_lines: 200
+    max_efferent_coupling: 15
+    enforce_naming_conventions: true
+    no_unnecessary_else_after_return: true
 
   config_hygiene:
     no_magic_numbers: true

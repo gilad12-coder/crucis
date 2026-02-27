@@ -83,7 +83,7 @@ Run `crucis doctor` to detect agent/model mismatches (e.g. a Claude agent config
 ## Constraint Profiles
 
 Constraint profiles are loaded from `constraints/profiles.yaml` (or a custom file via `--profiles`).
-Each profile lists constraints flat -- they are auto-classified into required (blocking) or advisory based on the field type. The old nested `primary:`/`secondary:` format still works for backward compatibility. See [Constraints Reference](constraints-reference.md) for all 34 available constraints and the list of advisory fields.
+Each profile lists constraints flat -- they are auto-classified into required (blocking) or advisory based on the field type. The old nested `primary:`/`secondary:` format still works for backward compatibility. See [Constraints Reference](constraints-reference.md) for all 44 available constraints and the list of advisory fields.
 
 ## Color and Output
 

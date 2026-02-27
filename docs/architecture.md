@@ -106,7 +106,7 @@ project/
 | `intake/objective.py` | YAML objective parsing and validation |
 | `intake/scaffold.py` | Workspace scaffolding and agent-driven onboarding (`crucis init`) |
 | `constraints/loader.py` | Profile loading, constraint resolution, and auto-classification via the constraint registry |
-| `constraints/checker.py` | AST-based static analysis (1700+ lines, 34 checks — each classified as required or advisory) |
+| `constraints/checker.py` | AST-based static analysis (44 checks — each classified as required or advisory) |
 | `execution/sandbox.py` | Docker-isolated pytest execution |
 | `execution/optimizer.py` | Background policy optimization job management |
 | `persistence/checkpoint.py` | Checkpoint creation, save, and load |

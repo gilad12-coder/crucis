@@ -65,6 +65,22 @@ class ConstraintSet(BaseModel):
     no_magic_numbers: bool | None = None
     max_string_literal_repeats: int | None = Field(default=None, ge=1)
 
+    # Class-level metrics (Layer 1)
+    max_methods_per_class: int | None = Field(default=None, ge=1)
+    max_fields_per_class: int | None = Field(default=None, ge=1)
+    max_class_lines: int | None = Field(default=None, ge=1)
+    max_weighted_methods_per_class: int | None = Field(default=None, ge=1)
+
+    # Module-level metrics (Layer 1)
+    max_efferent_coupling: int | None = Field(default=None, ge=0)
+    min_maintainability_index: float | None = Field(default=None, ge=0.0)
+
+    # Python idioms (Layer 2)
+    enforce_naming_conventions: bool | None = None
+    no_single_char_names: bool | None = None
+    no_unnecessary_else_after_return: bool | None = None
+    no_len_as_condition: bool | None = None
+
 
 class TaskConstraints(BaseModel):
     """Primary and secondary constraint sets with target files."""

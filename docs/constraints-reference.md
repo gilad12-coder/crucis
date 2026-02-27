@@ -1,6 +1,6 @@
 # Constraints Reference
 
-34 constraints are available, all mechanically checked via Python AST analysis. No runtime execution needed.
+44 constraints are available, all mechanically checked via Python AST analysis. No runtime execution needed.
 
 List constraints flat in your profiles (`constraints/profiles.yaml`). They are auto-classified into **required** (blocking) or **advisory** based on the field type.
 
@@ -83,6 +83,34 @@ Prevent common vulnerability patterns.
 
 ---
 
+## Class & Module Metrics
+
+Structural metrics for classes and modules.
+
+| Constraint | Type | Description |
+|---|---|---|
+| `max_methods_per_class` | `int` | Max methods per class (SRP proxy) |
+| `max_fields_per_class` | `int` | Max instance attributes per class |
+| `max_class_lines` | `int` | Max total lines in any single class body |
+| `max_weighted_methods_per_class` | `int` | Max sum of cyclomatic complexity across all methods in a class (WMC) |
+| `max_efferent_coupling` | `int` | Max distinct imported modules |
+| `min_maintainability_index` | `float` | Min Radon maintainability index (0–100, higher = better) |
+
+---
+
+## Python Idioms
+
+Python-specific convention checks based on PEP 8 and common best practices.
+
+| Constraint | Type | Description |
+|---|---|---|
+| `enforce_naming_conventions` | `bool` | PEP 8: snake_case functions/methods, CapWords classes |
+| `no_single_char_names` | `bool` | Ban single-char variable names (loop/comprehension vars exempt) |
+| `no_unnecessary_else_after_return` | `bool` | Flag `else` after `if` body ending in return/raise/break/continue |
+| `no_len_as_condition` | `bool` | Flag `len(x) > 0`, `len(x) == 0`, `len(x) != 0` patterns |
+
+---
+
 ## Quick-copy profiles
 
 ### Minimal
@@ -112,6 +140,12 @@ profiles:
     no_print_statements: true        # advisory
     no_debugger_statements: true     # advisory
     no_magic_numbers: true
+    max_methods_per_class: 20
+    max_fields_per_class: 10
+    max_class_lines: 200
+    max_efferent_coupling: 15
+    enforce_naming_conventions: true
+    no_unnecessary_else_after_return: true
 ```
 
 ### Strict
@@ -151,4 +185,14 @@ profiles:
     no_global_state: true            # advisory
     no_debugger_statements: true     # advisory
     no_nested_imports: true          # advisory
+    max_methods_per_class: 10
+    max_fields_per_class: 7
+    max_class_lines: 100
+    max_weighted_methods_per_class: 50
+    max_efferent_coupling: 10
+    min_maintainability_index: 20.0
+    enforce_naming_conventions: true
+    no_single_char_names: true
+    no_unnecessary_else_after_return: true
+    no_len_as_condition: true
 ```

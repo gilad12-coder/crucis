@@ -6,6 +6,22 @@ from collections import Counter
 
 from radon.complexity import cc_visit
 
+from crucis.constraints._class_metrics import (
+    _chk_class_lines,
+    _chk_fields_per_class,
+    _chk_methods_per_class,
+    _chk_weighted_methods_per_class,
+)
+from crucis.constraints._module_metrics import (
+    _chk_efferent_coupling,
+    _chk_maintainability_index,
+)
+from crucis.constraints._python_idioms import (
+    _chk_len_as_condition,
+    _chk_naming_conventions,
+    _chk_single_char_names,
+    _chk_unnecessary_else_after_return,
+)
 from crucis.constraints.plugins import run_custom_checks
 from crucis.models import ConstraintResult, ConstraintSet, TaskConstraints
 
@@ -780,6 +796,19 @@ _CHECKERS = [
     _chk_type_annotations,
     _chk_magic_numbers,
     _chk_string_literal_repeats,
+    # Layer 1: Class-level metrics
+    _chk_methods_per_class,
+    _chk_fields_per_class,
+    _chk_class_lines,
+    _chk_weighted_methods_per_class,
+    # Layer 1: Module-level metrics
+    _chk_efferent_coupling,
+    _chk_maintainability_index,
+    # Layer 2: Python idioms
+    _chk_naming_conventions,
+    _chk_single_char_names,
+    _chk_unnecessary_else_after_return,
+    _chk_len_as_condition,
 ]
 
 
