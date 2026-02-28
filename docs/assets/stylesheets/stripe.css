@@ -401,5 +401,5 @@ button {
 
 /* Enough bottom padding so even the last TOC section can scroll to top */
 .md-content__inner {
-  padding-bottom: 50vh;
+  padding-bottom: 4rem;
 }
