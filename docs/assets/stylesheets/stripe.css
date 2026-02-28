@@ -93,6 +93,11 @@ button {
   color: var(--crucis-text-soft);
 }
 
+/* Mobile nav drawer: override Material's blue background on GitHub card */
+.md-nav__source {
+  background-color: var(--crucis-bg);
+}
+
 .md-header__button.md-logo {
   display: inline-flex;
   align-items: center;
