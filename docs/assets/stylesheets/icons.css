@@ -1,0 +1,49 @@
+/* ==========================================================================
+   Icon Styling - Pencil Design System
+   Accent color: #785E48 (dark walnut)
+
+   Rules ordered most-specific to least-specific for correct cascade.
+   All rules scoped under .md-typeset / .md-content to avoid
+   overriding navigation, search, or theme toggle icons.
+   ========================================================================== */
+
+/* ---- H2 heading icons - 20px equivalent ---- */
+
+.md-typeset h2 .twemoji {
+  color: #785E48;
+  margin-right: 0.35em;
+  vertical-align: -0.15em;
+}
+
+.md-typeset h2 .twemoji svg {
+  width: 1.1em;
+  height: 1.1em;
+  fill: #785E48;
+}
+
+/* ---- Link list icons - 16px equivalent ---- */
+
+.md-typeset li .twemoji {
+  color: #785E48;
+  margin-right: 0.25em;
+  vertical-align: -0.1em;
+}
+
+.md-typeset li .twemoji svg {
+  width: 1em;
+  height: 1em;
+  fill: #785E48;
+}
+
+/* ---- Admonition title icons ---- */
+
+.md-typeset .admonition-title .twemoji svg,
+.md-typeset summary .twemoji svg {
+  fill: currentColor;
+}
+
+/* ---- General fallback - all remaining content icons ---- */
+
+.md-typeset .twemoji svg {
+  fill: #785E48;
+}

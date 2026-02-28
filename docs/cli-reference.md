@@ -2,6 +2,8 @@
 
 All Crucis commands with their options.
 
+Using an AI agent? See [MCP Server](mcp-server.md) for tool-based access to all commands.
+
 ---
 
 ## `crucis init`
@@ -188,9 +190,3 @@ Error messages include actionable hints where possible:
 Error: No objective file specified and no objective.yaml in current directory.
 Hint: Check the path or run 'crucis init' to create one.
 ```
-
----
-
-## MCP server alternative
-
-Every CLI command above is also available as an MCP tool via `crucis-mcp`. If you use Claude Code, OpenCode, or Codex, you can add Crucis as an MCP server and call these commands directly from your agent. See [MCP Server](mcp-server.md) for setup and the full tool reference.

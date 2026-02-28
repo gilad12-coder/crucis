@@ -116,4 +116,3 @@ tasks:
       - input: "(3, 4)"
         output: "12"
 ```
-

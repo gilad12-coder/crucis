@@ -2,9 +2,7 @@
 
 Crucis is an autonomy scaffold for code-generating agents. It works best for functions and modules with well-defined input/output contracts. Here are common scenarios.
 
----
-
-## Utility library
+## :material-code-tags: Utility library
 
 Build a set of pure functions (string manipulation, date math, data transformations) with adversarial verification that each function generalizes beyond the examples.
 
@@ -16,9 +14,9 @@ crucis run
 
 See [New Project Quickstart](quickstart-new-project.md).
 
----
+Crucis generates tests before code exists, so you define behavior through objectives rather than implementation.
 
-## Algorithm implementation
+## :material-cpu-64-bit: Algorithm implementation
 
 Implement algorithms (sorting, graph traversal, interval scheduling) where correctness is critical and edge cases are easy to miss.
 
@@ -30,9 +28,9 @@ crucis run
 
 Multi-task objectives let you verify each function independently. See the interval system example in the [How It Works](workflow.md) page.
 
----
+Adversarial hardening catches edge cases that manual refactoring tests typically miss.
 
-## Existing codebase refactor
+## :material-source-merge: Existing codebase refactor
 
 Add a new module or refactor behavior in an existing project. Use `context_files` to feed your project's patterns into prompts and `existing_tests` as a regression gate.
 
@@ -44,9 +42,9 @@ crucis run
 
 See [Existing Codebase Quickstart](quickstart-existing-codebase.md).
 
----
+The existing-codebase quickstart integrates Crucis without restructuring your project.
 
-## Data pipeline validation
+## :material-database-outline: Data pipeline validation
 
 Define a data transformation pipeline with input/output contracts. Auto-holdout evals (the last ~20% of your examples, automatically reserved) verify the pipeline handles unseen data shapes.
 
@@ -56,9 +54,9 @@ crucis init --name etl_pipeline --no-agent
 crucis run
 ```
 
----
+Holdout verification ensures pipelines produce correct output on unseen inputs.
 
-## Multi-task API
+## :material-server-outline: Multi-task API
 
 Generate and verify multiple related endpoint handlers in one objective. Each task maps to one handler function, all sharing the same target file.
 
@@ -81,14 +79,11 @@ tasks:
         output: "{'id': 1, 'name': 'alice'}"
 ```
 
-Just write `examples:` -- the last ~20% are automatically held out as hidden evals.
+Just write `examples:` — the last ~20% are automatically held out as hidden evals.
 
 ```bash
 crucis run --task create_user
 crucis run --task get_user
 ```
 
-## Next step
-
-- [CLI Reference](cli-reference.md) — all commands and options
-- [Objective Format Reference](objective-reference.md) — how to structure your objective file
+Constraint profiles enforce response schemas and error handling patterns automatically.

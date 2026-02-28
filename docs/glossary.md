@@ -131,4 +131,3 @@ Each task progresses through a state machine:
 | `.crucis/settings.yaml` | Runtime settings (created with `--with-settings`) |
 | `.crucis/optimizer/` | Optimizer state, policies, queue, and runs (when optimizer enabled) |
 | `.crucis/logs/` | Structured JSONL run logs |
-

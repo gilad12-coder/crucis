@@ -1,6 +1,6 @@
 # Background Optimizer
 
-> **Experimental.** The optimizer is disabled by default. To enable it, set `optimizer: enabled: true` in `.crucis/settings.yaml`. See [Enabling the optimizer](#enabling-the-optimizer) below.
+**Experimental:** The optimizer is disabled by default. Enable it by adding `optimizer: enabled: true` to `.crucis/settings.yaml`. See [Enabling the optimizer](#enabling-the-optimizer) below.
 
 Crucis includes a background policy optimizer powered by [GEPA](https://github.com/gilad12-coder/gepa) that improves prompt steering over time. After each `fit` or `evaluate` run, Crucis queues an optimization job that scores candidate policies against a baseline using black-box evaluation.
 

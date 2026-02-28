@@ -2,12 +2,14 @@
 
 Crucis uses environment-backed runtime settings (`crucis/config.py`) and workspace-local settings (`.crucis/settings.yaml`).
 
+Most projects only need `objective.yaml`. Profiles and settings are optional — Crucis uses sensible defaults.
+
 ## Key Runtime Fields
 
 Environment variables (or `config.py` defaults):
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|---|---|---|
 | `GENERATION_AGENT` | `claude` | Agent for test generation |
 | `GENERATION_MODEL` | `claude-opus-4-6` | Model for test generation |
 | `CRITIC_AGENT` | `claude` | Agent for adversarial review |
@@ -17,7 +19,7 @@ Environment variables (or `config.py` defaults):
 | `MAX_ITERATIONS` | `10` | Max retry attempts for generation/evaluation |
 | `MAX_BUDGET_USD` | `5.0` | Per-agent-call cost budget cap |
 | `OPTIMIZER_EVAL_TIMEOUT_SEC` | `180` | Evaluator timeout in seconds |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key (required for `claude` agent) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (required for claude agent) |
 | `OPENAI_API_KEY` | — | OpenAI API key (optional when Codex CLI login session is active) |
 
 ## Workspace Settings
@@ -82,8 +84,7 @@ Run `crucis doctor` to detect agent/model mismatches (e.g. a Claude agent config
 
 ## Constraint Profiles
 
-Constraint profiles are loaded from `constraints/profiles.yaml` (or a custom file via `--profiles`).
-Each profile lists constraints flat -- they are auto-classified into required (blocking) or advisory based on the field type. The old nested `primary:`/`secondary:` format still works for backward compatibility. See [Constraints Reference](constraints-reference.md) for all 44 available constraints and the list of advisory fields.
+Constraint profiles are loaded from `constraints/profiles.yaml` (or a custom file via `--profiles`). Each profile lists constraints flat — they are auto-classified into required (blocking) or advisory based on the field type. The old nested `primary:`/`secondary:` format still works for backward compatibility. See [Constraints Reference](constraints-reference.md) for all 44 available constraints and the list of advisory fields.
 
 ## Color and Output
 
@@ -105,7 +106,7 @@ Color is enabled by default when stderr is a TTY. Override with:
 When running Crucis as an [MCP server](mcp-server.md), these additional environment variables apply:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|---|---|---|
 | `CRUCIS_MCP_AUTHORIZED` | — | Set to `1` to authorize MCP access to the workspace |
 | `CRUCIS_WORKSPACE` | cwd | Override workspace root for the MCP server |
 

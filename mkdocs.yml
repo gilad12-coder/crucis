@@ -3,8 +3,12 @@ site_description: Objective-driven coding with adversarial verification
 repo_url: https://github.com/gilad12-coder/crucis
 repo_name: gilad12-coder/crucis
 
+hooks:
+  - hooks/reading_time.py
+
 theme:
   name: material
+  custom_dir: docs/overrides
   language: en
   font:
     text: Inter
@@ -15,15 +19,6 @@ theme:
     - scheme: default
       primary: custom
       accent: custom
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
   features:
     - navigation.instant
     - navigation.path
@@ -38,8 +33,15 @@ theme:
 plugins:
   - search
 
+extra_javascript:
+  - assets/javascripts/copy-feedback.js
+
 extra_css:
   - assets/stylesheets/stripe.css
+  - assets/stylesheets/icons.css
+  - assets/stylesheets/badges.css
+  - assets/stylesheets/admonitions.css
+  - assets/stylesheets/mobile.css
 
 nav:
   - Home: index.md
@@ -47,12 +49,12 @@ nav:
   - Quickstarts:
     - New Project: quickstart-new-project.md
     - Existing Codebase: quickstart-existing-codebase.md
+  - How It Works: workflow.md
   - Why Crucis: why-crucis.md
   - Use Cases: use-cases.md
-  - How It Works: workflow.md
   - Reference:
-    - CLI Commands: cli-reference.md
     - MCP Server: mcp-server.md
+    - CLI Commands: cli-reference.md
     - Objective Format: objective-reference.md
     - Constraints: constraints-reference.md
   - Configuration: configuration.md

@@ -2,7 +2,7 @@
 
 Crucis is an autonomy scaffold for code-generating agents. It provides structured automated feedback — tests, adversarial review, constraints, holdout verification — so agents can iterate longer without human intervention. The result: generated code that actually works beyond the examples you gave it.
 
-## Is Crucis for me?
+## Is Crucis right for your project?
 
 | Situation | Path |
 |---|---|
@@ -10,13 +10,13 @@ Crucis is an autonomy scaffold for code-generating agents. It provides structure
 | Adding verified behavior to an existing codebase | [Existing Codebase Quickstart](quickstart-existing-codebase.md) |
 | Want to understand the approach first | [Why Crucis](why-crucis.md) |
 
+If you work inside Claude Code, OpenCode, or Codex, you can use Crucis as an [MCP server](mcp-server.md) instead of the CLI. The MCP server exposes every CLI command as a tool your agent can call directly.
+
 ## Prerequisites
 
-Before you start, you need:
-
-1. **Python 3.10+** (3.12+ recommended)
-2. **An agent CLI** on your PATH — either `claude` or `codex`
-3. **An API key** — `ANTHROPIC_API_KEY` for Claude, or `OPENAI_API_KEY` / `codex login` for Codex
+1. Python 3.10+ (3.12+ recommended)
+2. An agent CLI on your PATH — either `claude` or `codex`
+3. An API key — `ANTHROPIC_API_KEY` for Claude, or `OPENAI_API_KEY` / `codex login` for Codex
 
 ## Verify your environment
 
@@ -28,25 +28,23 @@ This checks Python version, agent binaries, API keys, Docker availability, and r
 
 ## Install
 
-=== "uv (recommended)"
+```bash
+uv pip install crucis
+```
 
-    ```bash
-    uv pip install crucis
-    ```
+Also available via pip:
 
-=== "pip"
+```bash
+pip install crucis
+```
 
-    ```bash
-    pip install crucis
-    ```
+Or run directly from the source tree (no install):
 
-=== "Source tree (no install)"
+```bash
+./crucis-dev doctor --workspace .
+```
 
-    ```bash
-    ./crucis-dev doctor --workspace .
-    ```
-
-## What `crucis init` creates
+## What crucis init creates
 
 By default, `crucis init` creates only two files: `objective.yaml` and `src/solution.py`. Profiles and settings are optional — add them with `--with-profiles` or `--with-settings`. Settings are auto-created on first `crucis run` if they don't exist.
 
@@ -58,6 +56,3 @@ Pick a quickstart:
 
 - [New Project Quickstart](quickstart-new-project.md) — build a function from scratch with full verification
 - [Existing Codebase Quickstart](quickstart-existing-codebase.md) — add verified behavior to your current project
-
-!!! tip "Using an AI agent?"
-    If you work inside Claude Code, OpenCode, or Codex, you can use Crucis as an [MCP server](mcp-server.md) instead of the CLI. The MCP server exposes every CLI command as a tool your agent can call directly.

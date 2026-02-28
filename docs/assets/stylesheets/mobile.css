@@ -1,0 +1,167 @@
+/* ── Mobile responsive overrides for Crucis docs ──
+ *
+ * Fine-tunes MkDocs Material's built-in responsive layout
+ * to match the Pencil mobile design (375px viewport).
+ * ────────────────────────────────────────────────────── */
+
+/* ── General layout improvements (desktop + mobile) ── */
+
+/* Smooth transitions for responsive elements */
+.md-content__inner,
+.md-typeset h1,
+.md-typeset h2 {
+  transition: font-size 0.2s ease;
+}
+
+/* Prevent long words from breaking layout */
+.md-typeset {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
+/* Table improvements for both desktop and mobile */
+.md-typeset table:not([class]) {
+  width: 100%;
+}
+
+.md-typeset table:not([class]) td,
+.md-typeset table:not([class]) th {
+  padding: 0.6em 0.8em;
+  font-size: 0.85rem;
+}
+
+/* Footer styling to match Pencil */
+.md-footer-nav__link {
+  color: #C2703A;
+}
+
+.md-footer-nav__direction {
+  color: #A69178;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Mobile overrides (max-width: 76.25em is Material's breakpoint) ── */
+
+@media screen and (max-width: 76.25em) {
+  /* Ensure quote bar wraps nicely on mobile */
+  .md-header::after {
+    font-size: 0.6rem;
+    padding: 0.2rem 0.5rem;
+    text-align: center;
+  }
+
+  /* Content padding on mobile */
+  .md-content__inner {
+    padding: 1rem;
+  }
+
+  /* H1 sizing on mobile */
+  .md-typeset h1 {
+    font-size: 1.6rem;
+  }
+
+  /* H2 sizing on mobile */
+  .md-typeset h2 {
+    font-size: 1.2rem;
+  }
+
+  /* ── Tables: stacked card layout on mobile ── */
+  .md-typeset__scrollwrap {
+    overflow-x: visible;
+  }
+
+  .md-typeset table:not([class]) {
+    display: block;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .md-typeset table:not([class]) thead {
+    display: none;
+  }
+
+  .md-typeset table:not([class]) tbody {
+    display: block;
+  }
+
+  .md-typeset table:not([class]) tr {
+    display: block;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--crucis-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--crucis-surface);
+  }
+
+  .md-typeset table:not([class]) td {
+    display: block;
+    padding: 0.5em 0.75em;
+    border: none;
+    white-space: normal;
+  }
+
+  .md-typeset table:not([class]) td:first-child {
+    background: #F0E6D6;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 0.4em 0.75em;
+  }
+
+  .md-typeset table:not([class]) td:last-child {
+    font-size: 13px;
+  }
+
+  /* Middle cells in 3+ column tables: render as inline badge */
+  .md-typeset table:not([class]) td:not(:first-child):not(:last-child) {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--crucis-text-soft);
+    padding: 0.2em 0.75em 0.3em;
+  }
+
+  /* Inline code in table cells: allow wrapping */
+  .md-typeset table:not([class]) td code {
+    white-space: normal;
+    word-break: break-word;
+    font-size: 11.5px;
+  }
+
+  /* Code blocks don't overflow */
+  .md-typeset pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* Admonitions: less padding on mobile */
+  .md-typeset .admonition,
+  .md-typeset details {
+    padding: 0.5em;
+  }
+
+  /* Badge styling on mobile */
+  .md-typeset h1 + p > em:only-child {
+    font-size: 0.7rem;
+    padding: 0.15em 0.6em;
+  }
+}
+
+/* ── Smaller mobile (iPhone SE etc) ── */
+
+@media screen and (max-width: 30em) {
+  .md-header::after {
+    font-size: 0.55rem;
+  }
+
+  .md-typeset h1 {
+    font-size: 1.4rem;
+  }
+
+  .md-content__inner {
+    padding: 0.75rem;
+  }
+}

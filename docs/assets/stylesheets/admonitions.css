@@ -1,0 +1,125 @@
+/* ==========================================================================
+   Admonitions – Warm Autumn Palette
+   Overrides MkDocs Material defaults so ALL admonition types use the
+   Pencil design's honey-cream / amber-brown / golden-rod scheme.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Base admonition box
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition,
+.md-typeset details {
+  background: #FFF0D4 !important;
+  border: 1px solid #D4A45A !important;
+  border-radius: 8px;
+  box-shadow: none !important;
+  border-left-width: 1px !important;  /* Override Material's thick left border */
+}
+
+/* --------------------------------------------------------------------------
+   2. Title bar
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition-title,
+.md-typeset summary {
+  background: transparent !important;
+  border-bottom: none !important;
+  color: #8B6B3D !important;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.6em 0.8em;
+}
+
+/* Icon color (SVG icon next to title) */
+.md-typeset .admonition-title::before,
+.md-typeset summary::before {
+  color: #8B6B3D !important;
+}
+
+.md-typeset .admonition-title .twemoji svg,
+.md-typeset .admonition-title svg {
+  fill: #8B6B3D;
+}
+
+/* --------------------------------------------------------------------------
+   3. Body text
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition > p,
+.md-typeset .admonition > ul,
+.md-typeset .admonition p,
+.md-typeset details > p,
+.md-typeset details p {
+  color: #8B6B3D;
+}
+
+/* --------------------------------------------------------------------------
+   4. Inline code inside admonitions
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition code {
+  background: rgba(139, 107, 61, 0.1);
+  color: #8B6B3D;
+  border-color: #D4A45A;
+}
+
+/* --------------------------------------------------------------------------
+   5. Per-type overrides (unified warm palette)
+   Material sets per-type colors via --md-admonition-* vars and typed
+   selectors. We override them all to the single warm scheme.
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition.note,
+.md-typeset .admonition.info,
+.md-typeset .admonition.tip,
+.md-typeset .admonition.hint,
+.md-typeset .admonition.important,
+.md-typeset .admonition.warning,
+.md-typeset .admonition.danger,
+.md-typeset .admonition.bug,
+.md-typeset .admonition.example,
+.md-typeset .admonition.quote {
+  background: #FFF0D4 !important;
+  border-color: #D4A45A !important;
+}
+
+.md-typeset .note > .admonition-title,
+.md-typeset .info > .admonition-title,
+.md-typeset .tip > .admonition-title,
+.md-typeset .hint > .admonition-title,
+.md-typeset .important > .admonition-title,
+.md-typeset .warning > .admonition-title,
+.md-typeset .danger > .admonition-title,
+.md-typeset .bug > .admonition-title,
+.md-typeset .example > .admonition-title,
+.md-typeset .quote > .admonition-title {
+  background: transparent !important;
+  color: #8B6B3D !important;
+}
+
+/* Also target the [data-md-color-scheme] scope Material may use */
+[data-md-color-scheme="default"] .md-typeset .admonition,
+[data-md-color-scheme="default"] .md-typeset details {
+  background: #FFF0D4 !important;
+  border-color: #D4A45A !important;
+}
+
+[data-md-color-scheme="default"] .md-typeset .admonition-title,
+[data-md-color-scheme="default"] .md-typeset summary {
+  background: transparent !important;
+  color: #8B6B3D !important;
+}
+
+/* --------------------------------------------------------------------------
+   6. Exception: success admonition (accent badge, e.g. MCP page)
+   Keeps the terracotta style defined in badges.css.
+   -------------------------------------------------------------------------- */
+.md-typeset .admonition.success {
+  background: #C2703A !important;
+  border-color: #A05A2A !important;
+}
+
+.md-typeset .admonition.success > .admonition-title {
+  color: #FDF8F0 !important;
+  background: transparent !important;
+}
+
+.md-typeset .admonition.success p {
+  color: #FDF8F0;
+}
