@@ -1,16 +1,31 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 site/
 *.egg-info/
 dist/
+build/
+target/
+node_modules/
 .idea/
 .cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
 
 # Local config
 .mcp.json
+.playwright-mcp/
+designs/
+projects/
+.benchmarks/
 
 # Crucis run artifacts
 .session.json
 .checkpoint.json
 .crucis/
+
+# Local visual artifacts (root only)
+/*.png
